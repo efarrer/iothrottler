@@ -16,10 +16,8 @@ type Bandwidth int64
 const (
 	// Bytes per second
 	BytesPerSecond Bandwidth = 1
-	// Bits per second
-	Bps = BytesPerSecond * 8
 	// Kilobits per second
-	Kbps = Bps * 1024
+	Kbps = BytesPerSecond * (1024/8)
 	// Megabits per second
 	Mbps = Kbps * 1024
 	// Gigabits per second

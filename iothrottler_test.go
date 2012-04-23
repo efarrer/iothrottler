@@ -134,16 +134,13 @@ func dosPipe(reader io.Reader, writer io.Writer) {
  */
 func TestBandwidthConversion(t *testing.T) {
 	for i := Bandwidth(0); i != 1000; i++ {
-		if Bps*i != BytesPerSecond*i*8 {
-			t.Fatalf("Bad conversion from Bps to Bandwidth for %v (%v %v)", i, Bps*i*8, BytesPerSecond*i)
-		}
-		if Kbps*i != BytesPerSecond*(i*1024*8) {
+		if Kbps*i != BytesPerSecond*(i*1024/8) {
 			t.Fatalf("Bad conversion from Kbps to Bandwidth %v", i)
 		}
-		if Mbps*i != BytesPerSecond*i*1024*1024*8 {
+		if Mbps*i != BytesPerSecond*i*1024*1024/8 {
 			t.Fatalf("Bad conversion from Mbps to Bandwidth %v", i)
 		}
-		if Gbps*i != BytesPerSecond*i*1024*1024*1024*8 {
+		if Gbps*i != BytesPerSecond*i*1024*1024*1024/8 {
 			t.Fatalf("Bad conversion from Gbps to Bandwidth %v", i)
 		}
 	}
