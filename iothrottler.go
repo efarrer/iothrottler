@@ -85,6 +85,10 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				// Since we have bandwidth to allocate we can select on
 				// the bandwidth allocator chan
 				thisBandwidthAllocatorChan = bandwidthAllocatorChan
+			} else {
+				// We've allocate all out bandwidth so we need to wait for
+				// more
+				thisBandwidthAllocatorChan = nil
 			}
 		}
 
@@ -125,11 +129,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				if Unlimited != totalbandwidth {
 					totalbandwidth -= allocationSize
 
-					if totalbandwidth <= 0 {
-						// We've allocate all out bandwidth so we need to wait for
-						// more
-						thisBandwidthAllocatorChan = nil
-					}
+					recalculateAllocationSize()
 				}
 
 			// Get unused bandwidth back from client
