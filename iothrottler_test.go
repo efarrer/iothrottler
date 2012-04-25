@@ -1,11 +1,13 @@
 package iothrottler
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -794,4 +796,66 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 	data := []byte("01234")
 
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
+}
+
+/*
+ * Make sure that early members of a pool don't get all of the initial bandwidth
+ * This can be tricky we want to leave a little bandwidth around in case new
+ * members get added but we don't want to unnecessarily limit existing pool
+ * members.
+ */
+func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
+	const fileName = "/dev/zero"
+
+	// Test with both a lot of readers and a little data to send and a lot of
+	// data to send and a few readers
+	for j := 0; j != 2; j++ {
+		toCopy := int64(1024 * 10)
+		readers := 10
+		if j == 0 {
+			// Lots of readers only a few bytes to write
+			readers *= 10
+		} else {
+			// Few readers lots of bytes to write
+			toCopy *= 10
+		}
+
+		// We calculate the bandwidth so that the initial pool should have exactly
+		// enough bandwidth for all IO without having to wait any time. If our
+		// allocation is perfect this should finish in well under 1/10th of a second
+		bandwidth := Bandwidth(BytesPerSecond * Bandwidth(toCopy*int64(readers)))
+
+		pool := NewIOThrottlerPool(bandwidth)
+		defer pool.ReleasePool()
+
+		timer := startTimer()
+		for i := 0; i != readers; i++ {
+			file, err := os.Open(fileName)
+			defer file.Close()
+
+			if err != nil {
+				t.Fatalf("Couldn't open %v %v", fileName, err)
+			}
+			tFile, err := pool.AddReader(file)
+			if err != nil {
+				t.Fatalf("Couldn't add reader to the pool %v", err)
+			}
+			var dst bytes.Buffer
+			written, err := io.CopyN(&dst, tFile, toCopy)
+			if err != nil {
+				t.Fatalf("Couldn't copy the bytes %v", err)
+			}
+			if written != toCopy {
+				t.Fatalf("Should have copied %v but only copied %v", toCopy, written)
+			}
+		}
+
+		// Under our current allocation heuristic this takes 1 second to finish
+		// If we improve our heuristic then we should decrease 'expected'.
+		// Any change that increases 'expected' is a regression.
+		const expected = 1
+		if timer.elapsedSeconds() != expected {
+			t.Fatalf("Should have taken %v seconds but it took %v instead", expected, timer.elapsedSeconds())
+		}
+	}
 }
