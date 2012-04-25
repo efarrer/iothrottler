@@ -69,7 +69,7 @@ func timePipeTransmittion(data []byte, reader io.Reader, writer io.Writer) (Seco
  * 'expectedDelay' seconds
  */
 func assertTransmitTime(data []byte, reader io.Reader, writer io.Writer, expectedDelay Seconds, t *testing.T) {
-    elapsedSeconds, err := timePipeTransmittion(data, reader, writer)
+	elapsedSeconds, err := timePipeTransmittion(data, reader, writer)
 	if elapsedSeconds != expectedDelay {
 		t.Fatalf("Expecting read to take %v seconds but it took %v instead", expectedDelay, elapsedSeconds)
 	}

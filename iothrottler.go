@@ -17,7 +17,7 @@ const (
 	// Bytes per second
 	BytesPerSecond Bandwidth = 1
 	// Kilobits per second
-	Kbps = BytesPerSecond * (1024/8)
+	Kbps = BytesPerSecond * (1024 / 8)
 	// Megabits per second
 	Mbps = Kbps * 1024
 	// Gigabits per second
@@ -125,11 +125,11 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				}
 
 			// Get unused bandwidth back from client
-			case returnSize := <- bandwidthFreeChan:
-                totalbandwidth += returnSize
-                    // We could re-calculate the allocationSize but it may not
-                    // really matter as we'll do it as soon as we get more
-                    // bandwidth
+			case returnSize := <-bandwidthFreeChan:
+				totalbandwidth += returnSize
+				// We could re-calculate the allocationSize but it may not
+				// really matter as we'll do it as soon as we get more
+				// bandwidth
 
 				// Get more bandwidth to allocate
 			case <-timeout:
