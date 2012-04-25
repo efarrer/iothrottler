@@ -58,22 +58,27 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 		var thisBandwidthAllocatorChan chan Bandwidth = nil
 
 		recalculateAllocationSize := func() {
-			// Calculate how much bandwidth each consumer will get
-			// We divvy the available bandwidth among the existing
-			// clients but leave a bit of room in case more clients
-			// connect in the mean time. This greatly improves
-			// performance
-			allocationSize = totalbandwidth / Bandwidth(clientCount+1)
+			if totalbandwidth == Unlimited {
+				allocationSize = Unlimited
+			} else {
 
-			// Even if we have a negative totalbandwidth we never want to
-			// allocate negative bandwidth to members of our pool
-			if allocationSize < 0 {
-				allocationSize = 0
-			}
+				// Calculate how much bandwidth each consumer will get
+				// We divvy the available bandwidth among the existing
+				// clients but leave a bit of room in case more clients
+				// connect in the mean time. This greatly improves
+				// performance
+				allocationSize = totalbandwidth / Bandwidth(clientCount+1)
 
-			// If we do have some bandwidth make sure we at least allocate 1 byte
-			if allocationSize == 0 && totalbandwidth > 0 {
-				allocationSize = 1
+				// Even if we have a negative totalbandwidth we never want to
+				// allocate negative bandwidth to members of our pool
+				if allocationSize < 0 {
+					allocationSize = 0
+				}
+
+				// If we do have some bandwidth make sure we at least allocate 1 byte
+				if allocationSize == 0 && totalbandwidth > 0 {
+					allocationSize = 1
+				}
 			}
 
 			if allocationSize > 0 {
@@ -116,17 +121,21 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 
 			// Allocate some bandwidth
 			case thisBandwidthAllocatorChan <- allocationSize:
-				totalbandwidth -= allocationSize
+				if Unlimited != totalbandwidth {
+					totalbandwidth -= allocationSize
 
-				if totalbandwidth <= 0 {
-					// We've allocate all out bandwidth so we need to wait for
-					// more
-					thisBandwidthAllocatorChan = nil
+					if totalbandwidth <= 0 {
+						// We've allocate all out bandwidth so we need to wait for
+						// more
+						thisBandwidthAllocatorChan = nil
+					}
 				}
 
 			// Get unused bandwidth back from client
 			case returnSize := <-bandwidthFreeChan:
-				totalbandwidth += returnSize
+				if Unlimited != totalbandwidth {
+					totalbandwidth += returnSize
+				}
 				// We could re-calculate the allocationSize but it may not
 				// really matter as we'll do it as soon as we get more
 				// bandwidth
@@ -134,10 +143,12 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				// Get more bandwidth to allocate
 			case <-timeout:
 				if clientCount > 0 {
-					// Get a new allotment of bandwidth
-					totalbandwidth += bandwidth
+					if Unlimited != totalbandwidth {
+						// Get a new allotment of bandwidth
+						totalbandwidth += bandwidth
 
-					recalculateAllocationSize()
+						recalculateAllocationSize()
+					}
 				}
 			}
 		}
