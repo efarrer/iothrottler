@@ -67,7 +67,11 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				// clients but leave a bit of room in case more clients
 				// connect in the mean time. This greatly improves
 				// performance
-				allocationSize = totalbandwidth / Bandwidth(clientCount+1)
+				if clientCount == 0 {
+					allocationSize = totalbandwidth / 2
+				} else {
+					allocationSize = totalbandwidth / Bandwidth(clientCount*2)
+				}
 
 				// Even if we have a negative totalbandwidth we never want to
 				// allocate negative bandwidth to members of our pool
