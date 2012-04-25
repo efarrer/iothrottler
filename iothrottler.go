@@ -118,6 +118,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				if clientCount == 0 {
 					timeout = nil
 				}
+				recalculateAllocationSize()
 
 			// Allocate some bandwidth
 			case thisBandwidthAllocatorChan <- allocationSize:
