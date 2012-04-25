@@ -861,3 +861,107 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkNewReleasePool(b *testing.B) {
+	for _b := 0; _b != b.N; _b++ {
+		pool := NewIOThrottlerPool(Unlimited)
+		defer pool.ReleasePool()
+	}
+}
+
+func BenchmarkAdd(b *testing.B) {
+	b.StopTimer()
+
+	pool := NewIOThrottlerPool(Unlimited)
+	defer pool.ReleasePool()
+
+	const fileName = "/dev/zero"
+	file, err := os.Open(fileName)
+	if err != nil {
+		b.Fatalf("Couldn't open %v %v", fileName, err)
+	}
+	defer file.Close()
+	b.StartTimer()
+
+	// Keep going until we have enough information
+	for _b := 0; _b != b.N; _b++ {
+		_, err := pool.AddReader(file)
+		if err != nil {
+			b.Fatalf("Couldn't add reader to the pool %v", err)
+		}
+	}
+}
+
+func BenchmarkFull(b *testing.B) {
+
+	// Keep going until we have enough information
+	for _b := 0; _b != b.N; _b++ {
+
+		// Test with both a lot of readers and a little data to send and a lot of
+		// data to send and a few readers
+		for j := 0; j != 2; j++ {
+
+			// Don't count creating all of our files and such
+			b.StopTimer()
+
+			toCopy := int64(1024 * 10)
+			readers := 10
+			if j == 0 {
+				// Lots of readers only a few bytes to write
+				readers *= 10
+			} else {
+				// Few readers lots of bytes to write
+				toCopy *= 10
+			}
+
+			// We calculate the bandwidth so that the initial pool should have exactly
+			// enough bandwidth for all IO without having to wait any time. If our
+			// allocation is perfect this should finish in well under 1/10th of a second
+			bandwidth := Bandwidth(BytesPerSecond * Bandwidth(toCopy*int64(readers)))
+
+			files := make([]*os.File, readers)
+			for i := 0; i != readers; i++ {
+				const fileName = "/dev/zero"
+				file, err := os.Open(fileName)
+				if err != nil {
+					b.Fatalf("Couldn't open %v %v", fileName, err)
+				}
+				defer file.Close()
+				files[i] = file
+			}
+
+			var dst bytes.Buffer
+			b.StartTimer()
+
+			pool := NewIOThrottlerPool(bandwidth)
+			defer pool.ReleasePool()
+
+			timer := startTimer()
+			for _, file := range files {
+				dst.Reset()
+
+				tFile, err := pool.AddReader(file)
+				if err != nil {
+					b.Fatalf("Couldn't add reader to the pool %v", err)
+				}
+
+				written, err := io.CopyN(&dst, tFile, toCopy)
+				if err != nil {
+					b.Fatalf("Couldn't copy the bytes %v", err)
+				}
+
+				if written != toCopy {
+					b.Fatalf("Should have copied %v but only copied %v", toCopy, written)
+				}
+			}
+
+			// Under our current allocation heuristic this takes 1 second to finish
+			// If we improve our heuristic then we should decrease 'expected'.
+			// Any change that increases 'expected' is a regression.
+			const expected = 1
+			if timer.elapsedSeconds() != expected {
+				b.Fatalf("Should have taken %v seconds but it took %v instead", expected, timer.elapsedSeconds())
+			}
+		}
+	}
+}
