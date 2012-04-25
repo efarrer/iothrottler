@@ -831,20 +831,22 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 		timer := startTimer()
 		for i := 0; i != readers; i++ {
 			file, err := os.Open(fileName)
-			defer file.Close()
-
 			if err != nil {
 				t.Fatalf("Couldn't open %v %v", fileName, err)
 			}
+			defer file.Close()
+
 			tFile, err := pool.AddReader(file)
 			if err != nil {
 				t.Fatalf("Couldn't add reader to the pool %v", err)
 			}
+
 			var dst bytes.Buffer
 			written, err := io.CopyN(&dst, tFile, toCopy)
 			if err != nil {
 				t.Fatalf("Couldn't copy the bytes %v", err)
 			}
+
 			if written != toCopy {
 				t.Fatalf("Should have copied %v but only copied %v", toCopy, written)
 			}
