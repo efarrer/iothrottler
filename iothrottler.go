@@ -52,10 +52,39 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 	go func() {
 
 		clientCount := int64(0)
-		totalbandwidth := Bandwidth(0)
+		totalbandwidth := Bandwidth(bandwidth)
 		allocationSize := Bandwidth(0)
 		var timeout <-chan time.Time = nil
 		var thisBandwidthAllocatorChan chan Bandwidth = nil
+
+		recalculateAllocationSize := func() {
+			// Calculate how much bandwidth each consumer will get
+			// We divvy the available bandwidth among the existing
+			// clients but leave a bit of room in case more clients
+			// connect in the mean time. This greatly improves
+			// performance
+			allocationSize = totalbandwidth / Bandwidth(clientCount+1)
+
+			// Even if we have a negative totalbandwidth we never want to
+			// allocate negative bandwidth to members of our pool
+			if allocationSize < 0 {
+				allocationSize = 0
+			}
+
+			// If we do have some bandwidth make sure we at least allocate 1 byte
+			if allocationSize == 0 && totalbandwidth > 0 {
+				allocationSize = 1
+			}
+
+			if allocationSize > 0 {
+				// Since we have bandwidth to allocate we can select on
+				// the bandwidth allocator chan
+				thisBandwidthAllocatorChan = bandwidthAllocatorChan
+			}
+		}
+
+		// Start with our initial calculated allocation size
+		recalculateAllocationSize()
 
 		for {
 			select {
@@ -108,21 +137,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 					// Get a new allotment of bandwidth
 					totalbandwidth += bandwidth
 
-					// Calculate how much bandwidth each consumer will get
-                    // We divvy the available bandwidth among the existing
-                    // clients but leave a bit of room in case more clients
-                    // connect in the mean time. This greatly improves
-                    // performance
-					allocationSize = totalbandwidth / Bandwidth(clientCount+1)
-
-                    // Make sure we at least allocate 1 byte
-                    if allocationSize <= 0 {
-                        allocationSize = 1
-                    }
-
-                    // Since we now have bandwidth to allocate we can select on
-                    // the bandwidth allocator chan
-                    thisBandwidthAllocatorChan = bandwidthAllocatorChan
+					recalculateAllocationSize()
 				}
 			}
 		}

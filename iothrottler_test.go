@@ -568,7 +568,8 @@ func TestThrottling(t *testing.T) {
 		}
 		data := []byte("01234")
 
-		assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)), t)
+		// The pool starts with one second of bandwidth. So time is len(data)-1
+		assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)-1), t)
 	}
 
 	// Test delay for throttled writer
@@ -585,7 +586,8 @@ func TestThrottling(t *testing.T) {
 		}
 		data := []byte("01234")
 
-		assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)), t)
+		// The pool starts with one second of bandwidth. So time is len(data)-1
+		assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 	}
 
 	// Test delay for throttled read/writer
@@ -611,13 +613,14 @@ func TestThrottling(t *testing.T) {
 		data := []byte("01234")
 
 		/*
-		 * A ReadWriter has both a reader and writer the writer will consume one
-		 * bandwidth allotment and then hang waiting for bytes to be written. The
-		 * reader will get the rest of the allotments. Because the writer gets one
-		 * of the first allotments it will take one second more to read the data
-		 * then normal
-		 */
-		expectedDelay := Seconds(len(data) + 1)
+					 * A ReadWriter has both a reader and writer the writer will consume one
+					 * bandwidth allotment and then hang waiting for bytes to be written. The
+					 * reader will get the rest of the allotments. Because the writer gets one
+					 * of the first allotments it will take one second more to read the data
+					 * then normal.
+			         * The pool starts with one second of bandwidth.
+		*/
+		expectedDelay := Seconds(len(data) - 1 + 1)
 		assertTransmitTime(data, throttleClient, server, expectedDelay, t)
 	}
 
@@ -644,13 +647,14 @@ func TestThrottling(t *testing.T) {
 		data := []byte("01234")
 
 		/*
-		 * A net.Conn has both a reader and writer the writer will consume one
-		 * bandwidth allotment and then hang waiting for bytes to be written. The
-		 * reader will get the rest of the allotments. Because the writer gets one
-		 * of the first allotments it will take one second more to read the data
-		 * then normal
-		 */
-		expectedDelay := Seconds(len(data) + 1)
+					 * A net.Conn has both a reader and writer the writer will consume one
+					 * bandwidth allotment and then hang waiting for bytes to be written. The
+					 * reader will get the rest of the allotments. Because the writer gets one
+					 * of the first allotments it will take one second more to read the data
+					 * then normal.
+			         * The pool starts with one second of bandwidth.
+		*/
+		expectedDelay := Seconds(len(data) - 1 + 1)
 		assertTransmitTime(data, throttleClient, server, expectedDelay, t)
 	}
 	println("\tThrottle done")
@@ -707,7 +711,8 @@ func TestLimitedReadAndWrite(t *testing.T) {
 	}
 	data := []byte("01234")
 
-	assertTransmitTime(data, throttledReadEnd, throttleWriteEnd, Seconds(len(data)), t)
+	// The pool starts with one second of bandwidth. So time is len(data)-1
+	assertTransmitTime(data, throttledReadEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 }
 
 /*
@@ -759,13 +764,14 @@ func TestLimitedReaderSharedPool(t *testing.T) {
 	data := []byte("01234")
 
 	/*
-	 * The null reader will get an allotment of bandwidth but it will never use
-	 * it and so it will never ask for more bandwidth. Because we only have 1
-	 * byte a second of bandwidth when the null reader gets it's allotment the
-	 * other read end will have to wait 1 second to get it's next allotment this
-	 * one second will delay the finish by 1 second
-	 */
-	assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)+1), t)
+			 * The null reader will get an allotment of bandwidth but it will never use
+			 * it and so it will never ask for more bandwidth. Because we only have 1
+			 * byte a second of bandwidth when the null reader gets it's allotment the
+			 * other read end will have to wait 1 second to get it's next allotment this
+			 * one second will delay the finish by 1 second.
+		     * Also the pool starts with one second of bandwidth.
+	*/
+	assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)-1+1), t)
 }
 
 /*
@@ -787,5 +793,5 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 	}
 	data := []byte("01234")
 
-	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)), t)
+	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 }
