@@ -215,7 +215,13 @@ func bandwidthLimitedCopy(pool *IOThrottlerPool, src io.ReadCloser, dst io.Write
 			if !ok {
 				return
 			}
-			totalBandwidth += allocation
+
+            // If we got unlimited bandwidth then just set our bandwidth
+            if allocation == Unlimited || totalBandwidth == Unlimited {
+                totalBandwidth = Unlimited
+            } else {
+                totalBandwidth += allocation
+            }
 
 			// Use our allocated bandwidth
 			for totalBandwidth > 0 {
