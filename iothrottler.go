@@ -195,7 +195,13 @@ func bandwidthLimitedCopy(pool *IOThrottlerPool, src io.ReadCloser, dst io.Write
 		// Register us with the pool so it will start allocating bandwidth
 		pool.clientCountChan <- 1
 		defer func() { pool.clientCountChan <- -1 }()
-		defer func() { pool.bandwidthFreeChan <- totalBandwidth }()
+		defer func() {
+            // Don't need to return if we got Unlimited bandwidth because the
+            // server doesn't need it back
+            if totalBandwidth != Unlimited {
+                pool.bandwidthFreeChan <- totalBandwidth
+            }
+        }()
 
 		// Close a closer using CloseWithError if possible
 		closeWithError := func(item io.Closer, err error) {
@@ -236,7 +242,9 @@ func bandwidthLimitedCopy(pool *IOThrottlerPool, src io.ReadCloser, dst io.Write
 					return
 				}
 				// Recalculate the bandwidth remaining
-				totalBandwidth -= Bandwidth(written)
+                if totalBandwidth != Unlimited {
+                    totalBandwidth -= Bandwidth(written)
+                }
 			}
 		}
 	}()
