@@ -13,7 +13,10 @@ Example
 -------
 ```go
 import (
-. "github.com/efarrer/iothrottler"
+	"bytes"
+	. "github.com/efarrer/iothrottler"
+	"io"
+	"os"
 )
 
 // Basic usage of a IOThrottlerPool to throttle reading from a file 
@@ -41,9 +44,6 @@ func ExampleIOThrottlerPool() {
 	if err != nil {
 		// handle error
 	}
-
-	fmt.Println("Done")
-	// Output: Done
 }
 
 ```
