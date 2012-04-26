@@ -111,6 +111,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 					// the panic if it's closed
 					releasePoolChan <- true
 					close(releasePoolChan)
+					close(clientCountChan)
 					return
 				}
 
@@ -142,7 +143,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 					totalbandwidth += returnSize
 				}
 
-                recalculateAllocationSize()
+				recalculateAllocationSize()
 
 				// Get more bandwidth to allocate
 			case <-timeout:
@@ -172,12 +173,18 @@ func (pool *IOThrottlerPool) ReleasePool() {
 	<-pool.releasePoolChan
 }
 
-// Copies bytes from src to dst until an error occurs
-// Copying is limited by the bandwidth allocated from the pool over a channel
-// passed to the bandwidth channel
-func bandwidthLimitedCopy(pool *IOThrottlerPool, src io.ReadCloser, dst io.WriteCloser) (err error) {
-	totalBandwidth := Bandwidth(0)
+// Returns the first error or nil if neither are errors
+func orErrors(er0, er1 error) error {
+	if er0 != nil {
+		return er0
+	}
+	return er1
+}
 
+/*
+ * Updates the client count for a pool return error on failure
+ */
+func twiddleClientCount(p *IOThrottlerPool, change int64) (err error) {
 	// When the pool has been released the server closes clientCountChan
 	// so our channel send will panic. We want to set the return error
 	defer func() {
@@ -185,152 +192,146 @@ func bandwidthLimitedCopy(pool *IOThrottlerPool, src io.ReadCloser, dst io.Write
 			err = errors.New("Pool has been released")
 		}
 	}()
-	// If the pool has been released this will panic
-	pool.releasePoolChan <- false
-
-	go func() {
-		defer src.Close()
-		defer dst.Close()
-
-		// Register us with the pool so it will start allocating bandwidth
-		pool.clientCountChan <- 1
-		defer func() { pool.clientCountChan <- -1 }()
-		defer func() {
-            // Don't need to return if we got Unlimited bandwidth because the
-            // server doesn't need it back
-            if totalBandwidth != Unlimited {
-                pool.bandwidthFreeChan <- totalBandwidth
-            }
-        }()
-
-		// Close a closer using CloseWithError if possible
-		closeWithError := func(item io.Closer, err error) {
-			p, ok := dst.(interface {
-				CloseWithError(error) error
-			})
-			if ok {
-				p.CloseWithError(err)
-			} else {
-				item.Close()
-			}
-		}
-
-		for {
-			// Get our allocation of bandwidth
-			allocation, ok := <-pool.bandwidthAllocatorChan
-			if !ok {
-				return
-			}
-
-            // If we got unlimited bandwidth then just set our bandwidth
-            if allocation == Unlimited || totalBandwidth == Unlimited {
-                totalBandwidth = Unlimited
-            } else {
-                totalBandwidth += allocation
-            }
-
-			// Use our allocated bandwidth
-			for totalBandwidth > 0 {
-
-				// Copy some data
-				written, err := io.CopyN(dst, src, int64(totalBandwidth))
-				// It's possible for CopyN to copy some bytes and return an
-				// error but in this case we don't care
-				if nil != err {
-					closeWithError(dst, err)
-					closeWithError(src, err)
-					return
-				}
-				// Recalculate the bandwidth remaining
-                if totalBandwidth != Unlimited {
-                    totalBandwidth -= Bandwidth(written)
-                }
-			}
-		}
-	}()
+	// Update the client count
+	p.clientCountChan <- change
 
 	return nil
 }
 
+// A ReadCloser that will respect the bandwidth limitations of the IOThrottlerPool
+type throttledReadCloser struct {
+	origReadCloser io.ReadCloser
+	pool           *IOThrottlerPool
+}
+
+// A WriteCloser that will respect the bandwidth limitations of the IOThrottlerPool
+type throttledWriteCloser struct {
+	origWriteCloser io.WriteCloser
+	pool            *IOThrottlerPool
+}
+
 // A ReadWriteCloser that will respect the bandwidth limitations of the IOThrottlerPool
 type throttledReadWriteCloser struct {
-	readPipe   *io.PipeReader
-	writePipe  *io.PipeWriter
-	origCloser io.Closer
+	throttledReadCloser
+	throttledWriteCloser
 }
 
-func (q *throttledReadWriteCloser) Read(p []byte) (n int, err error) {
-	return q.readPipe.Read(p)
-}
-
-func (q *throttledReadWriteCloser) Write(data []byte) (n int, err error) {
-	return q.writePipe.Write(data)
-}
-
-func (q *throttledReadWriteCloser) Close() error {
-	rerr := q.readPipe.Close()
-	werr := q.writePipe.Close()
-	cerr := q.origCloser.Close()
-
-	orErrors := func(er0, er1 error) error {
-		if er0 != nil {
-			return er0
-		}
-		return er1
+// Read method for the throttledReadCloser
+func (t *throttledReadCloser) Read(b []byte) (int, error) {
+	// Get some bandwidth
+	allocation, ok := <-t.pool.bandwidthAllocatorChan
+	if !ok {
+		// Pool has been released
+		return 0, errors.New("Pool has been released")
 	}
 
-	return orErrors(rerr, orErrors(werr, cerr))
+	// Calculate how much we can read
+	toRead := len(b)
+	if int(allocation) < len(b) {
+		toRead = int(allocation)
+	}
+
+	// Do the limited read
+	n, err := t.origReadCloser.Read(b[:toRead])
+
+	// Free up what we didn't use
+	if n < int(allocation) && allocation != Unlimited {
+		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
+	}
+
+	return n, err
+}
+
+// Write method for the throttledWriteCloser
+func (t *throttledWriteCloser) Write(data []byte) (int, error) {
+
+	// Write must either write len(data) bytes or return an error
+	allocation := Bandwidth(0)
+
+	for allocation < Bandwidth(len(data)) {
+		// Get some bandwidth
+		thisAllocation, ok := <-t.pool.bandwidthAllocatorChan
+		if !ok {
+			// Pool has been released
+			return 0, errors.New("Pool has been released")
+		}
+		allocation += thisAllocation
+	}
+
+	// Do the write
+	n, err := t.origWriteCloser.Write(data)
+
+	// Free up what we didn't use
+	if n < int(allocation) && allocation != Unlimited {
+		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
+	}
+
+	return n, err
+}
+
+// Close method for the throttledReadCloser
+func (t *throttledReadCloser) Close() error {
+	// Unregister with the pool
+	err := twiddleClientCount(t.pool, -1)
+
+	return orErrors(err, t.origReadCloser.Close())
+}
+
+// Close method for the throttledWriteCloser
+func (t *throttledWriteCloser) Close() error {
+	// Unregister with the pool
+	err := twiddleClientCount(t.pool, -1)
+
+	return orErrors(err, t.origWriteCloser.Close())
+}
+
+// Close method for the throttledReadWriteCloser
+func (t *throttledReadWriteCloser) Close() error {
+	// In this case we really have two copies of all the data
+	// It really doesn't matter which we use as the reader and writer hold the
+	// same data
+
+	// Unregister with the pool
+	err := twiddleClientCount(t.throttledReadCloser.pool, -1)
+
+	return orErrors(err, t.throttledReadCloser.origReadCloser.Close())
 }
 
 // Add a io.ReadCloser to the pool. The returned io.ReadCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddReader(reader io.ReadCloser) (io.ReadCloser, error) {
-	readPipeReadEnd, readPipeWriteEnd := io.Pipe()
-
-	// Do the reading
-	err := bandwidthLimitedCopy(p, reader, readPipeWriteEnd)
+	// Register with the pool
+	err := twiddleClientCount(p, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	return &throttledReadWriteCloser{readPipeReadEnd, readPipeWriteEnd, reader}, nil
+	return &throttledReadCloser{reader, p}, nil
 }
 
 // Add a io.WriteCloser to the pool. The returned io.WriteCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddWriter(writer io.WriteCloser) (io.WriteCloser, error) {
-	writePipeReadEnd, writePipeWriteEnd := io.Pipe()
-
-	// Do the writing
-	err := bandwidthLimitedCopy(p, writePipeReadEnd, writer)
+	// Register with the pool
+	err := twiddleClientCount(p, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	return &throttledReadWriteCloser{writePipeReadEnd, writePipeWriteEnd,
-		writer}, nil
+	return &throttledWriteCloser{writer, p}, nil
 }
 
 // Add a io.ReadWriteCloser to the pool. The returned io.ReadWriteCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddReadWriter(readWriter io.ReadWriteCloser) (io.ReadWriteCloser, error) {
-	readPipeReadEnd, readPipeWriteEnd := io.Pipe()
-	writePipeReadEnd, writePipeWriteEnd := io.Pipe()
-
-	// Do the reading
-	err := bandwidthLimitedCopy(p, readWriter, readPipeWriteEnd)
+	// Register with the pool
+	err := twiddleClientCount(p, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	// Do the writing
-	err = bandwidthLimitedCopy(p, writePipeReadEnd, readWriter)
-	if err != nil {
-		return nil, err
-	}
-
-	return &throttledReadWriteCloser{readPipeReadEnd, writePipeWriteEnd,
-		readWriter}, nil
+	return &throttledReadWriteCloser{throttledReadCloser{readWriter, p},
+		throttledWriteCloser{readWriter, p}}, err
 }
 
 // Add a net.Conn to the pool. The returned net.Conn shares the

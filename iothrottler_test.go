@@ -28,16 +28,6 @@ func (t timer) elapsedSeconds() Seconds {
 }
 
 /*
- * Returns the first error or nil if neither are errors
- */
-func orErrors(er0, er1 error) error {
-	if er0 != nil {
-		return er0
-	}
-	return er1
-}
-
-/*
  * Copy 'data' to 'writer' and read it from 'reader' return now long it took
  */
 func timePipeTransmittion(data []byte, reader io.Reader, writer io.Writer) (Seconds, error) {
@@ -614,15 +604,8 @@ func TestThrottling(t *testing.T) {
 		// The data to write and a buffer to read into
 		data := []byte("01234")
 
-		/*
-					 * A ReadWriter has both a reader and writer the writer will consume one
-					 * bandwidth allotment and then hang waiting for bytes to be written. The
-					 * reader will get the rest of the allotments. Because the writer gets one
-					 * of the first allotments it will take one second more to read the data
-					 * then normal.
-			         * The pool starts with one second of bandwidth.
-		*/
-		expectedDelay := Seconds(len(data) - 1 + 1)
+		// The pool starts with one second of bandwidth.
+		expectedDelay := Seconds(len(data) - 1)
 		assertTransmitTime(data, throttleClient, server, expectedDelay, t)
 	}
 
@@ -648,15 +631,8 @@ func TestThrottling(t *testing.T) {
 		// The data to write and a buffer to read into
 		data := []byte("01234")
 
-		/*
-					 * A net.Conn has both a reader and writer the writer will consume one
-					 * bandwidth allotment and then hang waiting for bytes to be written. The
-					 * reader will get the rest of the allotments. Because the writer gets one
-					 * of the first allotments it will take one second more to read the data
-					 * then normal.
-			         * The pool starts with one second of bandwidth.
-		*/
-		expectedDelay := Seconds(len(data) - 1 + 1)
+		// The pool starts with one second of bandwidth.
+		expectedDelay := Seconds(len(data) - 1)
 		assertTransmitTime(data, throttleClient, server, expectedDelay, t)
 	}
 	println("\tThrottle done")
@@ -753,27 +729,59 @@ func TestLimitedReaderSharedPool(t *testing.T) {
 
 	// This reader will not have any data written to it so it just consumes
 	// space in the pool
-	nullReadEnd, _ := io.Pipe()
+	singleReader, singleWriter := io.Pipe()
 	readEnd, writeEnd := io.Pipe()
 	throttledReadEnd, err := pool.AddReader(readEnd)
 	if err != nil {
 		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
 	}
-	_, err = pool.AddReader(nullReadEnd)
+	throttledSingleReader, err := pool.AddReader(singleReader)
 	if err != nil {
 		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
 	}
+
+	// Try and read a byte over the throttled pipe
+	buffer := make([]byte, 1)
+	_, err = timePipeTransmittion(buffer, throttledSingleReader, singleWriter)
+	if err != nil {
+		t.Fatalf("Couln't transfer the byte", err)
+	}
+
 	data := []byte("01234")
 
-	/*
-			 * The null reader will get an allotment of bandwidth but it will never use
-			 * it and so it will never ask for more bandwidth. Because we only have 1
-			 * byte a second of bandwidth when the null reader gets it's allotment the
-			 * other read end will have to wait 1 second to get it's next allotment this
-			 * one second will delay the finish by 1 second.
-		     * Also the pool starts with one second of bandwidth.
-	*/
+	// The null reader will try to read a single byte but no more so it will
+	// consume a single second of bandwidth. This will cause the other read to
+	// have to wait one more second for it to get it's allotment. So read will
+	// take one second longer
+	// Also the pool starts with one second of bandwidth.
 	assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)-1+1), t)
+}
+
+/*
+ * Make sure that clients of the pool that don't do any IO don't consume any
+ * bandwidth
+ */
+func TestIdleClientsDontConsumeBandwidthAllocations(t *testing.T) {
+	// One byte a second
+	pool := NewIOThrottlerPool(BytesPerSecond)
+	defer pool.ReleasePool()
+
+	// This reader will not have any data written to it so it just consumes
+	// space in the pool
+	singleReader, _ := io.Pipe()
+	readEnd, writeEnd := io.Pipe()
+	throttledReadEnd, err := pool.AddReader(readEnd)
+	if err != nil {
+		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
+	}
+
+	// Add the client to the pool but don't do any IO with it
+	pool.AddReader(singleReader)
+
+	data := []byte("01234")
+
+	// The pool starts with one second of bandwidth. So time is len(data)-1
+	assertTransmitTime(data, throttledReadEnd, writeEnd, Seconds(len(data)-1), t)
 }
 
 /*
@@ -795,7 +803,7 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 	}
 	data := []byte("01234")
 
-    // The pool starts with one second of bandwidth. So time is len(data)-1
+	// The pool starts with one second of bandwidth. So time is len(data)-1
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 }
 
@@ -853,10 +861,10 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 			}
 		}
 
-		// Under our current allocation heuristic this takes 1 second to finish
-		// If we improve our heuristic then we should decrease 'expected'.
-		// Any change that increases 'expected' is a regression.
-		const expected = 1
+		// Because we've been given exactly enough bandwidth to copy the data
+		// and the pool starts with 1 second of bandwidth we should be able to
+		// finish this in under a second
+		const expected = 0
 		if timer.elapsedSeconds() != expected {
 			t.Fatalf("Should have taken %v seconds but it took %v instead", expected, timer.elapsedSeconds())
 		}
@@ -895,15 +903,67 @@ func BenchmarkAdd(b *testing.B) {
 
 func BenchmarkFull(b *testing.B) {
 
+	copyToReaders := func(bytesToCopy int64, readerCount int) {
+
+		// Don't count creating all of our files and such
+		b.StopTimer()
+
+		// We calculate the bandwidth so that the initial pool should have exactly
+		// enough bandwidth for all IO without having to wait any time. If our
+		// allocation is perfect this should finish in well under 1/10th of a second
+		bandwidth := Bandwidth(BytesPerSecond * Bandwidth(bytesToCopy*int64(readerCount)))
+
+		files := make([]*os.File, readerCount)
+		for i := 0; i != readerCount; i++ {
+			const fileName = "/dev/zero"
+			file, err := os.Open(fileName)
+			if err != nil {
+				b.Fatalf("Couldn't open %v %v", fileName, err)
+			}
+			defer file.Close()
+			files[i] = file
+		}
+
+		var dst bytes.Buffer
+		b.StartTimer()
+
+		pool := NewIOThrottlerPool(bandwidth)
+		defer pool.ReleasePool()
+
+		timer := startTimer()
+		for _, file := range files {
+			dst.Reset()
+
+			tFile, err := pool.AddReader(file)
+			if err != nil {
+				b.Fatalf("Couldn't add reader to the pool %v", err)
+			}
+
+			written, err := io.CopyN(&dst, tFile, bytesToCopy)
+			if err != nil {
+				b.Fatalf("Couldn't copy the bytes %v", err)
+			}
+
+			if written != bytesToCopy {
+				b.Fatalf("Should have copied %v but only copied %v", bytesToCopy, written)
+			}
+		}
+
+		// Because we've been given exactly enough bandwidth to copy the data
+		// and the pool starts with 1 second of bandwidth we should be able to
+		// finish this in under a second
+		const expected = 0
+		if timer.elapsedSeconds() != expected {
+			b.Fatalf("Should have taken %v seconds but it took %v instead", expected, timer.elapsedSeconds())
+		}
+	}
+
 	// Keep going until we have enough information
 	for _b := 0; _b != b.N; _b++ {
 
 		// Test with both a lot of readers and a little data to send and a lot of
 		// data to send and a few readers
 		for j := 0; j != 2; j++ {
-
-			// Don't count creating all of our files and such
-			b.StopTimer()
 
 			toCopy := int64(1024 * 10)
 			readers := 10
@@ -915,54 +975,7 @@ func BenchmarkFull(b *testing.B) {
 				toCopy *= 10
 			}
 
-			// We calculate the bandwidth so that the initial pool should have exactly
-			// enough bandwidth for all IO without having to wait any time. If our
-			// allocation is perfect this should finish in well under 1/10th of a second
-			bandwidth := Bandwidth(BytesPerSecond * Bandwidth(toCopy*int64(readers)))
-
-			files := make([]*os.File, readers)
-			for i := 0; i != readers; i++ {
-				const fileName = "/dev/zero"
-				file, err := os.Open(fileName)
-				if err != nil {
-					b.Fatalf("Couldn't open %v %v", fileName, err)
-				}
-				defer file.Close()
-				files[i] = file
-			}
-
-			var dst bytes.Buffer
-			b.StartTimer()
-
-			pool := NewIOThrottlerPool(bandwidth)
-			defer pool.ReleasePool()
-
-			timer := startTimer()
-			for _, file := range files {
-				dst.Reset()
-
-				tFile, err := pool.AddReader(file)
-				if err != nil {
-					b.Fatalf("Couldn't add reader to the pool %v", err)
-				}
-
-				written, err := io.CopyN(&dst, tFile, toCopy)
-				if err != nil {
-					b.Fatalf("Couldn't copy the bytes %v", err)
-				}
-
-				if written != toCopy {
-					b.Fatalf("Should have copied %v but only copied %v", toCopy, written)
-				}
-			}
-
-			// Under our current allocation heuristic this takes 1 second to finish
-			// If we improve our heuristic then we should decrease 'expected'.
-			// Any change that increases 'expected' is a regression.
-			const expected = 1
-			if timer.elapsedSeconds() != expected {
-				b.Fatalf("Should have taken %v seconds but it took %v instead", expected, timer.elapsedSeconds())
-			}
+			copyToReaders(toCopy, readers)
 		}
 	}
 }
