@@ -10,9 +10,7 @@ import (
 	"os"
 )
 
-/*
- * Basic usage of a IOThrottlerPool to throttle reading from a file 
- */
+// Basic usage of a IOThrottlerPool to throttle reading from a file 
 func ExampleIOThrottlerPool() {
 	// Construct a bandwidth throttling pool that's limited to 100 bytes per second
 	pool := NewIOThrottlerPool(BytesPerSecond * 100)
@@ -42,9 +40,7 @@ func ExampleIOThrottlerPool() {
 	// Output: Done
 }
 
-/*
- * Throttle web requests using an IOThrottlerPool
- */
+// Throttle web requests using an IOThrottlerPool
 func ExampleIOThrottlerPool_AddConn() {
 	// Construct a bandwidth throttling pool that's limited to 30 kilobits per
 	// second
