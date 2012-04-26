@@ -11,13 +11,12 @@ If you have the Go Language installed type
 
 Example
 -------
+```go
 import (
 . "github.com/efarrer/iothrottler"
 )
 
-/*
- * Throttle web requests using an IOThrottlerPool
- */
+// Throttle web requests using an IOThrottlerPool
 func ExampleIOThrottlerPool_AddConn() {
 	// Construct a bandwidth throttling pool that's limited to 30 kilobits per
     // second
@@ -59,3 +58,4 @@ func ExampleIOThrottlerPool_AddConn() {
 	fmt.Println("Done")
 	// Output: Done
 }
+```
