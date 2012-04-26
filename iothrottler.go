@@ -141,9 +141,8 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				if Unlimited != totalbandwidth {
 					totalbandwidth += returnSize
 				}
-				// We could re-calculate the allocationSize but it may not
-				// really matter as we'll do it as soon as we get more
-				// bandwidth
+
+                recalculateAllocationSize()
 
 				// Get more bandwidth to allocate
 			case <-timeout:
