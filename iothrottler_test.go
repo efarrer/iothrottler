@@ -795,6 +795,7 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 	}
 	data := []byte("01234")
 
+    // The pool starts with one second of bandwidth. So time is len(data)-1
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 }
 
