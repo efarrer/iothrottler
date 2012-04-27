@@ -813,6 +813,38 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 }
 
 /*
+ * Make sure we can set a new bandwidth for a pool and the new settings will
+ * take effect
+ */
+func TestSettingBandwidthOnExistingPoolWorks(t *testing.T) {
+	// One byte a second
+	pool := NewIOThrottlerPool(BytesPerSecond)
+	defer pool.ReleasePool()
+
+	readEnd, writeEnd := io.Pipe()
+	throttleWriteEnd, err := pool.AddWriter(writeEnd)
+	if err != nil {
+		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
+	}
+	data := []byte("01234")
+
+	// The pool starts with one second of bandwidth. So time is len(data)-1
+	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
+
+	// Now switch to unlimited bandwidth
+	pool.SetBandwidth(Unlimited)
+
+	// The pool starts with unlimited bandwidth so this should take 0 seconds
+	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(0), t)
+
+	// Back to a slow connection
+	pool.SetBandwidth(BytesPerSecond)
+
+	// The pool starts with one second of bandwidth. So time is len(data)-1
+	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
+}
+
+/*
  * Make sure that early members of a pool don't get all of the initial bandwidth
  * This can be tricky we want to leave a little bandwidth around in case new
  * members get added but we don't want to unnecessarily limit existing pool

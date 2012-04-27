@@ -28,7 +28,8 @@ const (
 
 // A pool for throttling IO
 type IOThrottlerPool struct {
-	bandwidth Bandwidth
+	// A channel for setting the pools bandwith
+	bandwidthSettingChan chan Bandwidth
 	// A channel for allocating bandwidth
 	bandwidthAllocatorChan chan Bandwidth
 	// A channel for returning unused bandwidth to server
@@ -43,6 +44,7 @@ type IOThrottlerPool struct {
 // Construct a new IO throttling pool
 // The bandwidth for this pool will be limited to 'bandwidth'
 func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
+	bandwidthSettingChan := make(chan Bandwidth)
 	bandwidthAllocatorChan := make(chan Bandwidth)
 	bandwidthFreeChan := make(chan Bandwidth)
 	clientCountChan := make(chan int64)
@@ -51,13 +53,19 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 	// Handle the read
 	go func() {
 
+		// These will all be recalculated as soon as the bandwidth is set
 		clientCount := int64(0)
-		totalbandwidth := Bandwidth(bandwidth)
+		currentBandwidth := Bandwidth(0)
+		totalbandwidth := Bandwidth(0)
 		allocationSize := Bandwidth(0)
 		var timeout <-chan time.Time = nil
 		var thisBandwidthAllocatorChan chan Bandwidth = nil
 
 		recalculateAllocationSize := func() {
+			if currentBandwidth == Unlimited {
+				totalbandwidth = Unlimited
+			}
+
 			if totalbandwidth == Unlimited {
 				allocationSize = Unlimited
 			} else {
@@ -96,9 +104,6 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 			}
 		}
 
-		// Start with our initial calculated allocation size
-		recalculateAllocationSize()
-
 		for {
 			select {
 			// Release the pool
@@ -127,6 +132,26 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 				if clientCount == 0 {
 					timeout = nil
 				}
+				recalculateAllocationSize()
+
+			// Set the new bandwidth
+			case newBandwidth := <-bandwidthSettingChan:
+				// If we've accumulated more bandwidth then the new amount we
+				// truncate the totalbandwidth to the new set amount. This is
+				// important if the totalbandwidth is much larger than the
+				// new bandwidth value we could end up not really respecting the
+				// new bandwidth setting. An extreme example of this is if the
+				// old bandwidth was set to Unlimited (totalbandwidth would be
+				// Unlimited)
+				//
+				// If the totalbandwidth is less than the new bandwidth setting
+				// we want to bring it up to the new bandwidth value so clients
+				// can immediately use the new available bandwidth
+				totalbandwidth = newBandwidth
+
+				// Update the current bandwidth
+				currentBandwidth = newBandwidth
+
 				recalculateAllocationSize()
 
 			// Allocate some bandwidth
@@ -159,7 +184,9 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 		}
 	}()
 
-	return &IOThrottlerPool{bandwidth, bandwidthAllocatorChan, bandwidthFreeChan, clientCountChan, releasePoolChan}
+	bandwidthSettingChan <- bandwidth
+
+	return &IOThrottlerPool{bandwidthSettingChan, bandwidthAllocatorChan, bandwidthFreeChan, clientCountChan, releasePoolChan}
 }
 
 // Release the IOThrottlerPool all bandwidth
@@ -171,6 +198,11 @@ func (pool *IOThrottlerPool) ReleasePool() {
 	}()
 	pool.releasePoolChan <- true
 	<-pool.releasePoolChan
+}
+
+// Sets the IOThrottlerPool's bandwith rate
+func (pool *IOThrottlerPool) SetBandwidth(bandwith Bandwidth) {
+	pool.bandwidthSettingChan <- bandwith
 }
 
 // Returns the first error or nil if neither are errors
