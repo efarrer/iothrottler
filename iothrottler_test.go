@@ -24,7 +24,12 @@ func startTimer() timer {
 type Seconds int64
 
 func (t timer) elapsedSeconds() Seconds {
-	return Seconds(time.Now().Sub(time.Time(t)).Seconds())
+	milliseconds := time.Now().Sub(time.Time(t)) / time.Millisecond
+
+	// Round to the nearest second
+	seconds := ((milliseconds + 500) / 1000)
+
+	return Seconds(seconds)
 }
 
 /*
