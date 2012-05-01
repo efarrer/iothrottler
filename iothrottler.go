@@ -258,16 +258,16 @@ func (t *throttledReadCloser) Read(b []byte) (int, error) {
 	}
 
 	// Calculate how much we can read
-	toRead := len(b)
-	if int(allocation) < len(b) {
-		toRead = int(allocation)
+	toRead := Bandwidth(len(b))
+	if allocation < Bandwidth(len(b)) {
+		toRead = allocation
 	}
 
 	// Do the limited read
 	n, err := t.origReadCloser.Read(b[:toRead])
 
 	// Free up what we didn't use
-	if n < int(allocation) && allocation != Unlimited {
+	if Bandwidth(n) < allocation && allocation != Unlimited {
 		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
 	}
 
@@ -294,7 +294,7 @@ func (t *throttledWriteCloser) Write(data []byte) (int, error) {
 	n, err := t.origWriteCloser.Write(data)
 
 	// Free up what we didn't use
-	if n < int(allocation) && allocation != Unlimited {
+	if Bandwidth(n) < allocation && allocation != Unlimited {
 		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
 	}
 

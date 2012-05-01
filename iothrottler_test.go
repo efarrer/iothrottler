@@ -643,6 +643,21 @@ func TestThrottling(t *testing.T) {
 	println("\tThrottle done")
 }
 
+func TestUnlimitedBandwidthIsFast(t *testing.T) {
+	pool := NewIOThrottlerPool(Unlimited)
+	defer pool.ReleasePool()
+		readEnd, writeEnd := io.Pipe()
+		throttledReadEnd, err := pool.AddReader(readEnd)
+		throttledWriteEnd, err := pool.AddWriter(writeEnd)
+		if err != nil {
+			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
+		}
+		data := make([]byte, 10000)
+
+		// Unlimited bandwidth should be fast
+		assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
+}
+
 func TestAggressiveClientsDontMonopolizeBandwidth(t *testing.T) {
 	// Test monopolization for throttled reader
 	{
