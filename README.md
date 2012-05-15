@@ -14,15 +14,16 @@ Example
 ```go
 import (
 	"bytes"
-	. "github.com/efarrer/iothrottler"
+	"fmt"
 	"io"
+	"github.com/efarrer/iothrottler"
 	"os"
 )
 
 // Basic usage of a IOThrottlerPool to throttle reading from a file 
 func ExampleIOThrottlerPool() {
 	// Construct a bandwidth throttling pool that's limited to 100 bytes per second
-	pool := NewIOThrottlerPool(BytesPerSecond * 100)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond * 100)
 	defer pool.ReleasePool()
 
 	file, err := os.Open("/dev/zero")
@@ -44,6 +45,8 @@ func ExampleIOThrottlerPool() {
 	if err != nil {
 		// handle error
 	}
-}
 
+	fmt.Println("Done")
+	// Output: Done
+}
 ```

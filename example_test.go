@@ -1,10 +1,11 @@
-package iothrottler
+package iothrottler_test
 
 import (
 	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"iothrottler"
 	"net"
 	"net/http"
 	"os"
@@ -13,7 +14,7 @@ import (
 // Basic usage of a IOThrottlerPool to throttle reading from a file 
 func ExampleIOThrottlerPool() {
 	// Construct a bandwidth throttling pool that's limited to 100 bytes per second
-	pool := NewIOThrottlerPool(BytesPerSecond * 100)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond * 100)
 	defer pool.ReleasePool()
 
 	file, err := os.Open("/dev/zero")
@@ -44,7 +45,7 @@ func ExampleIOThrottlerPool() {
 func ExampleIOThrottlerPool_AddConn() {
 	// Construct a bandwidth throttling pool that's limited to 30 kilobits per
 	// second
-	pool := NewIOThrottlerPool(Kbps * 30)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Kbps * 30)
 	defer pool.ReleasePool()
 
 	// Create our own Dial function that will be used for the http connection
