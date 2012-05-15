@@ -32,13 +32,13 @@ func ExampleIOThrottlerPool() {
 
 	var zeros bytes.Buffer
 
-	_, err = io.CopyN(&zeros, throttledFile, 200)
+	copied, err := io.CopyN(&zeros, throttledFile, 200)
 	if err != nil {
 		// handle error
 	}
 
-	fmt.Println("Done")
-	// Output: Done
+	fmt.Printf("Copied %v bytes\n", copied)
+	// Output: Copied 200 bytes
 }
 
 // Throttle web requests using an IOThrottlerPool
@@ -80,6 +80,6 @@ func ExampleIOThrottlerPool_AddConn() {
 		return
 	}
 
-	fmt.Println("Done")
-	// Output: Done
+	fmt.Println("Downloaded www.google.com")
+	// Output: Downloaded www.google.com
 }
