@@ -128,7 +128,7 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 					return
 				}
 
-				// Register a new client
+            // Register a new client
 			case increment := <-clientCountChan:
 				// We got our first client
 				// We start the timer as soon as we get our first client
@@ -178,12 +178,12 @@ func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 
 				recalculateAllocationSize()
 
-				// Get more bandwidth to allocate
+            // Get more bandwidth to allocate
 			case <-timeout:
 				if clientCount > 0 {
 					if Unlimited != totalbandwidth {
 						// Get a new allotment of bandwidth
-						totalbandwidth += bandwidth
+						totalbandwidth += currentBandwidth
 
 						recalculateAllocationSize()
 					}
