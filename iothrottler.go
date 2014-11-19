@@ -52,149 +52,147 @@ type IOThrottlerPool struct {
 // Construct a new IO throttling pool
 // The bandwidth for this pool will be limited to 'bandwidth'
 func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
-	bandwidthSettingChan := make(chan Bandwidth)
-	bandwidthAllocatorChan := make(chan Bandwidth)
-	bandwidthFreeChan := make(chan Bandwidth)
-	clientCountChan := make(chan int64)
-	releasePoolChan := make(chan bool)
 
-	// Handle the read
-	go func() {
+	pool := &IOThrottlerPool{make(chan Bandwidth), make(chan Bandwidth), make(chan Bandwidth), make(chan int64), make(chan bool)}
 
-		// These will all be recalculated as soon as the bandwidth is set
-		clientCount := int64(0)
-		currentBandwidth := Bandwidth(0)
-		totalbandwidth := Bandwidth(0)
-		allocationSize := Bandwidth(0)
-		var timeout <-chan time.Time = nil
-		var thisBandwidthAllocatorChan chan Bandwidth = nil
+    go throttlerPoolDriver(pool)
 
-		recalculateAllocationSize := func() {
-			if currentBandwidth == Unlimited {
-				totalbandwidth = Unlimited
-			}
+	pool.bandwidthSettingChan <- bandwidth
 
-			if totalbandwidth == Unlimited {
-				allocationSize = Unlimited
-			} else {
+	return pool
+}
 
-				// Calculate how much bandwidth each consumer will get
-				// We divvy the available bandwidth among the existing
-				// clients but leave a bit of room in case more clients
-				// connect in the mean time. This greatly improves
-				// performance
-				if clientCount == 0 {
-					allocationSize = totalbandwidth / 2
-				} else {
-					allocationSize = totalbandwidth / Bandwidth(clientCount*2)
-				}
+func throttlerPoolDriver(pool *IOThrottlerPool) {
 
-				// Even if we have a negative totalbandwidth we never want to
-				// allocate negative bandwidth to members of our pool
-				if allocationSize < 0 {
-					allocationSize = 0
-				}
+    // These will all be recalculated as soon as the bandwidth is set
+    clientCount := int64(0)
+    currentBandwidth := Bandwidth(0)
+    totalbandwidth := Bandwidth(0)
+    allocationSize := Bandwidth(0)
+    var timeout <-chan time.Time = nil
+    var thisBandwidthAllocatorChan chan Bandwidth = nil
 
-				// If we do have some bandwidth make sure we at least allocate 1 byte
-				if allocationSize == 0 && totalbandwidth > 0 {
-					allocationSize = 1
-				}
-			}
+    recalculateAllocationSize := func() {
+        if currentBandwidth == Unlimited {
+            totalbandwidth = Unlimited
+        }
 
-			if allocationSize > 0 {
-				// Since we have bandwidth to allocate we can select on
-				// the bandwidth allocator chan
-				thisBandwidthAllocatorChan = bandwidthAllocatorChan
-			} else {
-				// We've allocate all out bandwidth so we need to wait for
-				// more
-				thisBandwidthAllocatorChan = nil
-			}
-		}
+        if totalbandwidth == Unlimited {
+            allocationSize = Unlimited
+        } else {
 
-		for {
-			select {
-			// Release the pool
-			case release := <-releasePoolChan:
-				if release {
-					close(bandwidthAllocatorChan)
-					close(bandwidthFreeChan)
-					// Don't close the clientCountChan it's not needed and it
-					// complicates the code (two different functions need to recover
-					// the panic if it's closed
-					releasePoolChan <- true
-					close(releasePoolChan)
-					close(clientCountChan)
-					return
-				}
+            // Calculate how much bandwidth each consumer will get
+            // We divvy the available bandwidth among the existing
+            // clients but leave a bit of room in case more clients
+            // connect in the mean time. This greatly improves
+            // performance
+            if clientCount == 0 {
+                allocationSize = totalbandwidth / 2
+            } else {
+                allocationSize = totalbandwidth / Bandwidth(clientCount*2)
+            }
 
-            // Register a new client
-			case increment := <-clientCountChan:
-				// We got our first client
-				// We start the timer as soon as we get our first client
-				if clientCount == 0 {
-					timeout = time.Tick(time.Second * 1)
-				}
-				clientCount += increment
-				// Our last client left so stop the timer
-				if clientCount == 0 {
-					timeout = nil
-				}
-				recalculateAllocationSize()
+            // Even if we have a negative totalbandwidth we never want to
+            // allocate negative bandwidth to members of our pool
+            if allocationSize < 0 {
+                allocationSize = 0
+            }
 
-			// Set the new bandwidth
-			case newBandwidth := <-bandwidthSettingChan:
-				// If we've accumulated more bandwidth then the new amount we
-				// truncate the totalbandwidth to the new set amount. This is
-				// important if the totalbandwidth is much larger than the
-				// new bandwidth value we could end up not really respecting the
-				// new bandwidth setting. An extreme example of this is if the
-				// old bandwidth was set to Unlimited (totalbandwidth would be
-				// Unlimited)
-				//
-				// If the totalbandwidth is less than the new bandwidth setting
-				// we want to bring it up to the new bandwidth value so clients
-				// can immediately use the new available bandwidth
-				totalbandwidth = newBandwidth
+            // If we do have some bandwidth make sure we at least allocate 1 byte
+            if allocationSize == 0 && totalbandwidth > 0 {
+                allocationSize = 1
+            }
+        }
 
-				// Update the current bandwidth
-				currentBandwidth = newBandwidth
+        if allocationSize > 0 {
+            // Since we have bandwidth to allocate we can select on
+            // the bandwidth allocator chan
+            thisBandwidthAllocatorChan = pool.bandwidthAllocatorChan
+        } else {
+            // We've allocate all out bandwidth so we need to wait for
+            // more
+            thisBandwidthAllocatorChan = nil
+        }
+    }
 
-				recalculateAllocationSize()
+    for {
+        select {
+        // Release the pool
+        case release := <-pool.releasePoolChan:
+            if release {
+                close(pool.bandwidthAllocatorChan)
+                close(pool.bandwidthFreeChan)
+                // Don't close the clientCountChan it's not needed and it
+                // complicates the code (two different functions need to recover
+                // the panic if it's closed
+                pool.releasePoolChan <- true
+                close(pool.releasePoolChan)
+                close(pool.clientCountChan)
+                return
+            }
 
-			// Allocate some bandwidth
-			case thisBandwidthAllocatorChan <- allocationSize:
-				if Unlimited != totalbandwidth {
-					totalbandwidth -= allocationSize
+        // Register a new client
+        case increment := <-pool.clientCountChan:
+            // We got our first client
+            // We start the timer as soon as we get our first client
+            if clientCount == 0 {
+                timeout = time.Tick(time.Second * 1)
+            }
+            clientCount += increment
+            // Our last client left so stop the timer
+            if clientCount == 0 {
+                timeout = nil
+            }
+            recalculateAllocationSize()
 
-					recalculateAllocationSize()
-				}
+        // Set the new bandwidth
+        case newBandwidth := <-pool.bandwidthSettingChan:
+            // If we've accumulated more bandwidth then the new amount we
+            // truncate the totalbandwidth to the new set amount. This is
+            // important if the totalbandwidth is much larger than the
+            // new bandwidth value we could end up not really respecting the
+            // new bandwidth setting. An extreme example of this is if the
+            // old bandwidth was set to Unlimited (totalbandwidth would be
+            // Unlimited)
+            //
+            // If the totalbandwidth is less than the new bandwidth setting
+            // we want to bring it up to the new bandwidth value so clients
+            // can immediately use the new available bandwidth
+            totalbandwidth = newBandwidth
 
-			// Get unused bandwidth back from client
-			case returnSize := <-bandwidthFreeChan:
-				if Unlimited != totalbandwidth {
-					totalbandwidth += returnSize
-				}
+            // Update the current bandwidth
+            currentBandwidth = newBandwidth
 
-				recalculateAllocationSize()
+            recalculateAllocationSize()
 
-            // Get more bandwidth to allocate
-			case <-timeout:
-				if clientCount > 0 {
-					if Unlimited != totalbandwidth {
-						// Get a new allotment of bandwidth
-						totalbandwidth += currentBandwidth
+        // Allocate some bandwidth
+        case thisBandwidthAllocatorChan <- allocationSize:
+            if Unlimited != totalbandwidth {
+                totalbandwidth -= allocationSize
 
-						recalculateAllocationSize()
-					}
-				}
-			}
-		}
-	}()
+                recalculateAllocationSize()
+            }
 
-	bandwidthSettingChan <- bandwidth
+        // Get unused bandwidth back from client
+        case returnSize := <-pool.bandwidthFreeChan:
+            if Unlimited != totalbandwidth {
+                totalbandwidth += returnSize
+            }
 
-	return &IOThrottlerPool{bandwidthSettingChan, bandwidthAllocatorChan, bandwidthFreeChan, clientCountChan, releasePoolChan}
+            recalculateAllocationSize()
+
+        // Get more bandwidth to allocate
+        case <-timeout:
+            if clientCount > 0 {
+                if Unlimited != totalbandwidth {
+                    // Get a new allotment of bandwidth
+                    totalbandwidth += currentBandwidth
+
+                    recalculateAllocationSize()
+                }
+            }
+        }
+    }
 }
 
 // Release the IOThrottlerPool all bandwidth
