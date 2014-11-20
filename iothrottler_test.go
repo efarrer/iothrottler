@@ -16,6 +16,26 @@ import (
 	"time"
 )
 
+func assertNil(i interface{}, t *testing.T) {
+	if i != nil {
+		if t != nil {
+			t.Fatalf("Expecting %v to be nil but it isn't.", i)
+		} else {
+			panic(fmt.Sprintf("Expecting %v to be nil but it isn't.", i))
+		}
+	}
+}
+
+func assertNotNil(i interface{}, t *testing.T) {
+	if i == nil {
+		if t != nil {
+			t.Fatalf("Expecting %v to be not nil but it is.", i)
+		} else {
+			panic(fmt.Sprintf("Expecting %v to be not nil but it is.", i))
+		}
+	}
+}
+
 /*
  * A simple timer for seeing how long an operation lasts
  */
@@ -74,9 +94,7 @@ func assertTransmitTime(data []byte, reader io.Reader, writer io.Writer, expecte
 	if elapsedSeconds != expectedDelay {
 		t.Fatalf("Expecting read to take %v seconds but it took %v instead", expectedDelay, elapsedSeconds)
 	}
-	if err != nil {
-		t.Fatalf("Error reading data %v", err)
-	}
+	assertNil(err, t)
 }
 
 /**
@@ -87,9 +105,7 @@ func createTcpPipe(addr string) (net.Conn, net.Conn, error) {
 	serverConn := make(chan net.Conn)
 
 	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, nil, err
-	}
+	assertNil(err, nil)
 	defer ln.Close()
 	go func() {
 		server, _ := ln.Accept()
@@ -98,9 +114,7 @@ func createTcpPipe(addr string) (net.Conn, net.Conn, error) {
 
 	// Connect the client socket
 	client, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, nil, err
-	}
+	assertNil(err, nil)
 
 	return client, <-serverConn, nil
 }
@@ -177,31 +191,21 @@ func TestCantAddToAReleasedPool(t *testing.T) {
 
 	// Should return an error
 	_, err := pool.AddWriter(writeEnd)
-	if err == nil {
-		t.Fatalf("AddWriter on a released pool didn't return error")
-	}
+	assertNotNil(err, t)
 
 	_, err = pool.AddReader(readEnd)
-	if err == nil {
-		t.Fatalf("AddReader on a released pool didn't return error")
-	}
+	assertNotNil(err, t)
 
 	client, server, err := createTcpPipe("localhost:8080")
-	if err != nil {
-		t.Fatalf("Didn't get a TCP pipe %v", err)
-	}
+	assertNil(err, t)
 	defer client.Close()
 	defer server.Close()
 
 	_, err = pool.AddReadWriter(client)
-	if err == nil {
-		t.Fatalf("AddReadWriter on a released pool didn't return error")
-	}
+	assertNotNil(err, t)
 
 	_, err = pool.AddConn(client)
-	if err == nil {
-		t.Fatalf("AddConn on a released pool didn't return error")
-	}
+	assertNotNil(err, t)
 }
 
 /*
@@ -228,9 +232,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		readEnd, writeEnd := io.Pipe()
 
 		throttleWriteEnd, err := pool.AddWriter(writeEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		throttleWriteEnd.Close()
 
 		buffer := make([]byte, 10)
@@ -255,9 +257,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		readEnd, writeEnd := io.Pipe()
 
 		throttledReadEnd, err := pool.AddReader(readEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		throttledReadEnd.Close()
 
 		buffer := make([]byte, 10)
@@ -286,16 +286,12 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		defer pool.ReleasePool()
 
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
 		throttleClient, err := pool.AddReadWriter(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		throttleClient.Close()
 
 		buffer := make([]byte, 10)
@@ -338,16 +334,12 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		defer pool.ReleasePool()
 
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
 		throttleClient, err := pool.AddConn(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		throttleClient.Close()
 
 		buffer := make([]byte, 10)
@@ -386,7 +378,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 
 /*
  * Make sure closing the original reader/writer closes the bandwidth limited
- * reader/writer 
+ * reader/writer
  */
 func TestCloseOriginalClosesThrottled(t *testing.T) {
 	// Test closing original writer
@@ -398,9 +390,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		readEnd, writeEnd := io.Pipe()
 
 		_, err := pool.AddWriter(writeEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		writeEnd.Close()
 
 		buffer := make([]byte, 10)
@@ -424,9 +414,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		readEnd, writeEnd := io.Pipe()
 
 		_, err := pool.AddReader(readEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		readEnd.Close()
 
 		buffer := make([]byte, 10)
@@ -454,16 +442,12 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		defer pool.ReleasePool()
 
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
 		_, err = pool.AddReadWriter(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		client.Close()
 
 		buffer := make([]byte, 10)
@@ -504,16 +488,12 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		defer pool.ReleasePool()
 
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
 		_, err = pool.AddConn(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		client.Close()
 
 		buffer := make([]byte, 10)
@@ -564,9 +544,7 @@ func TestThrottling(t *testing.T) {
 
 		readEnd, writeEnd := io.Pipe()
 		throttledReadEnd, err := pool.AddReader(readEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		data := []byte("01234")
 
 		// The pool starts with one second of bandwidth. So time is len(data)-1
@@ -582,9 +560,7 @@ func TestThrottling(t *testing.T) {
 
 		readEnd, writeEnd := io.Pipe()
 		throttleWriteEnd, err := pool.AddWriter(writeEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		data := []byte("01234")
 
 		// The pool starts with one second of bandwidth. So time is len(data)-1
@@ -595,9 +571,7 @@ func TestThrottling(t *testing.T) {
 	println("\tThrottled readwriter")
 	{
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
@@ -606,9 +580,7 @@ func TestThrottling(t *testing.T) {
 		defer pool.ReleasePool()
 
 		throttleClient, err := pool.AddReadWriter(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 
 		// The data to write and a buffer to read into
 		data := []byte("01234")
@@ -622,9 +594,7 @@ func TestThrottling(t *testing.T) {
 	println("\tThrottled conn")
 	{
 		client, server, err := createTcpPipe("localhost:8080")
-		if err != nil {
-			t.Fatalf("Didn't get a TCP pipe %v", err)
-		}
+		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
 
@@ -633,9 +603,7 @@ func TestThrottling(t *testing.T) {
 		defer pool.ReleasePool()
 
 		throttleClient, err := pool.AddConn(client)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 
 		// The data to write and a buffer to read into
 		data := []byte("01234")
@@ -650,16 +618,14 @@ func TestThrottling(t *testing.T) {
 func TestUnlimitedBandwidthIsFast(t *testing.T) {
 	pool := NewIOThrottlerPool(Unlimited)
 	defer pool.ReleasePool()
-		readEnd, writeEnd := io.Pipe()
-		throttledReadEnd, err := pool.AddReader(readEnd)
-		throttledWriteEnd, err := pool.AddWriter(writeEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
-		data := make([]byte, 10000)
+	readEnd, writeEnd := io.Pipe()
+	throttledReadEnd, err := pool.AddReader(readEnd)
+	throttledWriteEnd, err := pool.AddWriter(writeEnd)
+	assertNil(err, t)
+	data := make([]byte, 10000)
 
-		// Unlimited bandwidth should be fast
-		assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
+	// Unlimited bandwidth should be fast
+	assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
 }
 
 func TestAggressiveClientsDontMonopolizeBandwidth(t *testing.T) {
@@ -673,13 +639,9 @@ func TestAggressiveClientsDontMonopolizeBandwidth(t *testing.T) {
 		readEnd, writeEnd := io.Pipe()
 
 		throttledReadEnd, err := pool.AddReader(readEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 		throttledGreedyReadEnd, err := pool.AddReader(greedyReadEnd)
-		if err != nil {
-			t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-		}
+		assertNil(err, t)
 
 		// Hammer the greedy connection
 		dosPipe(throttledGreedyReadEnd, greedyWriteEnd)
@@ -704,13 +666,9 @@ func TestLimitedReadAndWrite(t *testing.T) {
 
 	readEnd, writeEnd := io.Pipe()
 	throttledReadEnd, err := readPool.AddReader(readEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 	throttleWriteEnd, err := writePool.AddWriter(writeEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 	data := []byte("01234")
 
 	// The pool starts with one second of bandwidth. So time is len(data)-1
@@ -756,20 +714,14 @@ func TestLimitedReaderSharedPool(t *testing.T) {
 	singleReader, singleWriter := io.Pipe()
 	readEnd, writeEnd := io.Pipe()
 	throttledReadEnd, err := pool.AddReader(readEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 	throttledSingleReader, err := pool.AddReader(singleReader)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 
 	// Try and read a byte over the throttled pipe
 	buffer := make([]byte, 1)
 	_, err = timePipeTransmittion(buffer, throttledSingleReader, singleWriter)
-	if err != nil {
-		t.Fatalf("Couln't transfer the byte", err)
-	}
+	assertNil(err, t)
 
 	data := []byte("01234")
 
@@ -795,9 +747,7 @@ func TestIdleClientsDontConsumeBandwidthAllocations(t *testing.T) {
 	singleReader, _ := io.Pipe()
 	readEnd, writeEnd := io.Pipe()
 	throttledReadEnd, err := pool.AddReader(readEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 
 	// Add the client to the pool but don't do any IO with it
 	pool.AddReader(singleReader)
@@ -822,9 +772,7 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 
 	readEnd, writeEnd := io.Pipe()
 	throttleWriteEnd, err := pool.AddWriter(writeEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 	data := []byte("01234")
 
 	// The pool starts with one second of bandwidth. So time is len(data)-1
@@ -842,9 +790,7 @@ func TestSettingBandwidthOnExistingPoolWorks(t *testing.T) {
 
 	readEnd, writeEnd := io.Pipe()
 	throttleWriteEnd, err := pool.AddWriter(writeEnd)
-	if err != nil {
-		t.Fatalf("Adding to an active pool shouldn't return an error %v", err)
-	}
+	assertNil(err, t)
 	data := []byte("01234")
 
 	// The pool starts with one second of bandwidth. So time is len(data)-1
@@ -896,21 +842,15 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 		timer := startTimer()
 		for i := 0; i != readers; i++ {
 			file, err := os.Open(fileName)
-			if err != nil {
-				t.Fatalf("Couldn't open %v %v", fileName, err)
-			}
+			assertNil(err, t)
 			defer file.Close()
 
 			tFile, err := pool.AddReader(file)
-			if err != nil {
-				t.Fatalf("Couldn't add reader to the pool %v", err)
-			}
+			assertNil(err, t)
 
 			var dst bytes.Buffer
 			written, err := io.CopyN(&dst, tFile, toCopy)
-			if err != nil {
-				t.Fatalf("Couldn't copy the bytes %v", err)
-			}
+			assertNil(err, t)
 
 			if written != toCopy {
 				t.Fatalf("Should have copied %v but only copied %v", toCopy, written)
@@ -942,18 +882,14 @@ func BenchmarkAdd(b *testing.B) {
 
 	const fileName = "/dev/zero"
 	file, err := os.Open(fileName)
-	if err != nil {
-		b.Fatalf("Couldn't open %v %v", fileName, err)
-	}
+	assertNil(err, nil)
 	defer file.Close()
 	b.StartTimer()
 
 	// Keep going until we have enough information
 	for _b := 0; _b != b.N; _b++ {
 		_, err := pool.AddReader(file)
-		if err != nil {
-			b.Fatalf("Couldn't add reader to the pool %v", err)
-		}
+		assertNil(err, nil)
 	}
 }
 
@@ -973,9 +909,7 @@ func BenchmarkFull(b *testing.B) {
 		for i := 0; i != readerCount; i++ {
 			const fileName = "/dev/zero"
 			file, err := os.Open(fileName)
-			if err != nil {
-				b.Fatalf("Couldn't open %v %v", fileName, err)
-			}
+			assertNil(err, nil)
 			defer file.Close()
 			files[i] = file
 		}
@@ -991,14 +925,10 @@ func BenchmarkFull(b *testing.B) {
 			dst.Reset()
 
 			tFile, err := pool.AddReader(file)
-			if err != nil {
-				b.Fatalf("Couldn't add reader to the pool %v", err)
-			}
+			assertNil(err, nil)
 
 			written, err := io.CopyN(&dst, tFile, bytesToCopy)
-			if err != nil {
-				b.Fatalf("Couldn't copy the bytes %v", err)
-			}
+			assertNil(err, nil)
 
 			if written != bytesToCopy {
 				b.Fatalf("Should have copied %v but only copied %v", bytesToCopy, written)
