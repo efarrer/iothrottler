@@ -100,7 +100,8 @@ func assertTransmitTime(data []byte, reader io.Reader, writer io.Writer, expecte
 /**
  * Creates a connected TCP pipe (like io.Pipe() but with TCP sockets)
  */
-func createTcpPipe(addr string) (net.Conn, net.Conn, error) {
+func createTcpPipe() (net.Conn, net.Conn, error) {
+	addr := "localhost:8080"
 
 	serverConn := make(chan net.Conn)
 
@@ -196,7 +197,7 @@ func TestCantAddToAReleasedPool(t *testing.T) {
 	_, err = pool.AddReader(readEnd)
 	assertNotNil(err, t)
 
-	client, server, err := createTcpPipe("localhost:8080")
+	client, server, err := createTcpPipe()
 	assertNil(err, t)
 	defer client.Close()
 	defer server.Close()
@@ -285,7 +286,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		pool := NewIOThrottlerPool(BytesPerSecond)
 		defer pool.ReleasePool()
 
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
@@ -333,7 +334,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 		pool := NewIOThrottlerPool(BytesPerSecond)
 		defer pool.ReleasePool()
 
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
@@ -441,7 +442,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		pool := NewIOThrottlerPool(BytesPerSecond)
 		defer pool.ReleasePool()
 
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
@@ -487,7 +488,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 		pool := NewIOThrottlerPool(BytesPerSecond)
 		defer pool.ReleasePool()
 
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
@@ -570,7 +571,7 @@ func TestThrottling(t *testing.T) {
 	// Test delay for throttled read/writer
 	println("\tThrottled readwriter")
 	{
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
@@ -593,7 +594,7 @@ func TestThrottling(t *testing.T) {
 	// Test delay for throttled net.Conn
 	println("\tThrottled conn")
 	{
-		client, server, err := createTcpPipe("localhost:8080")
+		client, server, err := createTcpPipe()
 		assertNil(err, t)
 		defer client.Close()
 		defer server.Close()
