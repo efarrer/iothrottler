@@ -15,7 +15,7 @@ import (
 	"os"
 )
 
-// Basic usage of a IOThrottlerPool to throttle reading from a file 
+// Basic usage of a IOThrottlerPool to throttle reading from a file
 func ExampleIOThrottlerPool() {
 	// Construct a bandwidth throttling pool that's limited to 100 bytes per second
 	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond * 100)
