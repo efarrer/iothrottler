@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"iothrottler"
 	"net"
 	"net/http"
 	"os"
+
+	"github.com/efarrer/iothrottler"
 )
 
 // Basic usage of a IOThrottlerPool to throttle reading from a file
