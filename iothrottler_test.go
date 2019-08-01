@@ -80,7 +80,7 @@ func timePipeTransmittion(data []byte, reader io.Reader, writer io.Writer) (Seco
 	elapsed := timer.elapsedSeconds()
 	var countError error = nil
 	if count != len(data) {
-		countError = errors.New(fmt.Sprint("Didn't read enough data. Read %v expected %v", count, len(data)))
+		countError = errors.New(fmt.Sprintf("Didn't read enough data. Read %v expected %v", count, len(data)))
 	}
 	return elapsed, orErrors(countError, orErrors(err, <-serverError))
 }
