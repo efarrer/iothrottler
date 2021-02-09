@@ -69,7 +69,7 @@ func throttlerPoolDriver(pool *IOThrottlerPool) {
 	currentBandwidth := Bandwidth(0)
 	totalbandwidth := Bandwidth(0)
 	allocationSize := Bandwidth(0)
-	var timeout <-chan time.Time = nil
+	timeout := time.NewTicker(time.Second)
 	var thisBandwidthAllocatorChan chan Bandwidth = nil
 
 	recalculateAllocationSize := func() {
@@ -136,12 +136,12 @@ func throttlerPoolDriver(pool *IOThrottlerPool) {
 			// We got our first client
 			// We start the timer as soon as we get our first client
 			if clientCount == 0 {
-				timeout = time.Tick(time.Second * 1)
+				timeout.Reset(time.Second)
 			}
 			clientCount += increment
 			// Our last client left so stop the timer
 			if clientCount == 0 {
-				timeout = nil
+				timeout.Stop()
 			}
 			recalculateAllocationSize()
 
@@ -182,7 +182,7 @@ func throttlerPoolDriver(pool *IOThrottlerPool) {
 			recalculateAllocationSize()
 
 		// Get more bandwidth to allocate
-		case <-timeout:
+		case <-timeout.C:
 			if clientCount > 0 {
 				if Unlimited != totalbandwidth {
 					// Get a new allotment of bandwidth
