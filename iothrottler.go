@@ -72,6 +72,9 @@ func throttlerPoolDriver(pool *IOThrottlerPool) {
 	timeout := time.NewTicker(time.Second)
 	var thisBandwidthAllocatorChan chan Bandwidth = nil
 
+	// Start the timer until we get the first client
+	timeout.Stop()
+
 	recalculateAllocationSize := func() {
 		if currentBandwidth == Unlimited {
 			totalbandwidth = Unlimited
