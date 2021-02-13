@@ -20,7 +20,6 @@ import (
 func ExampleIOThrottlerPool() {
 	// Construct a bandwidth throttling pool that's limited to 100 bytes per second
 	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond * 100)
-	defer pool.ReleasePool()
 
 	file, err := os.Open("/dev/zero")
 	if err != nil {
@@ -51,7 +50,6 @@ func ExampleIOThrottlerPool_AddConn() {
 	// Construct a bandwidth throttling pool that's limited to 30 kilobits per
 	// second
 	pool := iothrottler.NewIOThrottlerPool(iothrottler.Kbps * 30)
-	defer pool.ReleasePool()
 
 	// Create our own Dial function that will be used for the http connection
 	throttledDial := func(nt, addr string) (c net.Conn, err error) {
