@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package iothrottler
+package iothrottler_test
 
 import (
 	"bytes"
@@ -14,7 +14,19 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/efarrer/iothrottler"
 )
+
+// Returns the first error or nil if none are errors
+func orErrors(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func assertNil(i interface{}, t *testing.T) {
 	if i != nil {
@@ -149,14 +161,14 @@ func dosPipe(reader io.Reader, writer io.Writer) {
  * Make sure bandwidth conversions make senct
  */
 func TestBandwidthConversion(t *testing.T) {
-	for i := Bandwidth(0); i != 1000; i++ {
-		if Kbps*i != BytesPerSecond*(i*1024/8) {
+	for i := iothrottler.Bandwidth(0); i != 1000; i++ {
+		if iothrottler.Kbps*i != iothrottler.BytesPerSecond*(i*1024/8) {
 			t.Fatalf("Bad conversion from Kbps to Bandwidth %v", i)
 		}
-		if Mbps*i != BytesPerSecond*i*1024*1024/8 {
+		if iothrottler.Mbps*i != iothrottler.BytesPerSecond*i*1024*1024/8 {
 			t.Fatalf("Bad conversion from Mbps to Bandwidth %v", i)
 		}
-		if Gbps*i != BytesPerSecond*i*1024*1024*1024/8 {
+		if iothrottler.Gbps*i != iothrottler.BytesPerSecond*i*1024*1024*1024/8 {
 			t.Fatalf("Bad conversion from Gbps to Bandwidth %v", i)
 		}
 	}
@@ -167,8 +179,8 @@ func TestBandwidthConversion(t *testing.T) {
  */
 func TestUnlimitedBandwith(t *testing.T) {
 	max := int64(math.MaxInt64)
-	if int64(Unlimited) != max {
-		t.Fatalf("Unlimited isn't quite as unlimited as it should be %v vs %v", int64(Unlimited), max)
+	if int64(iothrottler.Unlimited) != max {
+		t.Fatalf("Unlimited isn't quite as unlimited as it should be %v vs %v", int64(iothrottler.Unlimited), max)
 	}
 }
 
@@ -176,14 +188,14 @@ func TestUnlimitedBandwith(t *testing.T) {
  * Make sure we can allocate then release a pool without crashing
  */
 func TestCreatingAPool(t *testing.T) {
-	NewIOThrottlerPool(Unlimited).ReleasePool()
+	iothrottler.NewIOThrottlerPool(iothrottler.Unlimited).ReleasePool()
 }
 
 /*
  * Make sure adding to a released pool returns an error
  */
 func TestCantAddToAReleasedPool(t *testing.T) {
-	pool := NewIOThrottlerPool(Unlimited)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
 	pool.ReleasePool()
 
 	readEnd, writeEnd := io.Pipe()
@@ -212,7 +224,7 @@ func TestCantAddToAReleasedPool(t *testing.T) {
  * Make sure we don't crash or do anything crazy if we release a pool twice
  */
 func TestReleasingAPoolTwiceIsNoop(t *testing.T) {
-	pool := NewIOThrottlerPool(Unlimited)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
 	pool.ReleasePool()
 	pool.ReleasePool()
 }
@@ -226,7 +238,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 	println("\tClose writer")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -251,7 +263,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 	println("\tClose reader")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -282,7 +294,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 	println("\tClose readwriter")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		client, server := createTcpPipe(t)
@@ -329,7 +341,7 @@ func TestCloseThrottledClosesOriginal(t *testing.T) {
 	println("\tClose net.Conn")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		client, server := createTcpPipe(t)
@@ -382,7 +394,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 	// Test closing original writer
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -406,7 +418,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 	// Test closing original reader
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -436,7 +448,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 	// Test closing original readwriter
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		client, server := createTcpPipe(t)
@@ -481,7 +493,7 @@ func TestCloseOriginalClosesThrottled(t *testing.T) {
 	// Test closing original net.Conn
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		client, server := createTcpPipe(t)
@@ -535,7 +547,7 @@ func TestThrottling(t *testing.T) {
 	println("\tThrottled reader")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -551,7 +563,7 @@ func TestThrottling(t *testing.T) {
 	println("\tThrottled writer")
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		readEnd, writeEnd := io.Pipe()
@@ -571,7 +583,7 @@ func TestThrottling(t *testing.T) {
 		defer server.Close()
 
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		throttleClient, err := pool.AddReadWriter(client)
@@ -593,7 +605,7 @@ func TestThrottling(t *testing.T) {
 		defer server.Close()
 
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		throttleClient, err := pool.AddConn(client)
@@ -610,7 +622,7 @@ func TestThrottling(t *testing.T) {
 }
 
 func TestUnlimitedBandwidthIsFast(t *testing.T) {
-	pool := NewIOThrottlerPool(Unlimited)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
 	defer pool.ReleasePool()
 	readEnd, writeEnd := io.Pipe()
 	throttledReadEnd, err := pool.AddReader(readEnd)
@@ -626,7 +638,7 @@ func TestAggressiveClientsDontMonopolizeBandwidth(t *testing.T) {
 	// Test monopolization for throttled reader
 	{
 		// One byte a second
-		pool := NewIOThrottlerPool(BytesPerSecond)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 		defer pool.ReleasePool()
 
 		greedyReadEnd, greedyWriteEnd := io.Pipe()
@@ -653,9 +665,9 @@ func TestAggressiveClientsDontMonopolizeBandwidth(t *testing.T) {
  */
 func TestLimitedReadAndWrite(t *testing.T) {
 	// One byte a second
-	readPool := NewIOThrottlerPool(BytesPerSecond)
+	readPool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer readPool.ReleasePool()
-	writePool := NewIOThrottlerPool(BytesPerSecond)
+	writePool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer writePool.ReleasePool()
 
 	readEnd, writeEnd := io.Pipe()
@@ -675,9 +687,9 @@ func TestLimitedReadAndWrite(t *testing.T) {
  */
 func TestThrottlerPoolDoesntEffectOriginalReadWriters(t *testing.T) {
 	// One byte a second
-	readPool := NewIOThrottlerPool(BytesPerSecond)
+	readPool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer readPool.ReleasePool()
-	writePool := NewIOThrottlerPool(BytesPerSecond)
+	writePool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer writePool.ReleasePool()
 
 	readEnd, writeEnd := io.Pipe()
@@ -700,7 +712,7 @@ func TestThrottlerPoolDoesntEffectOriginalReadWriters(t *testing.T) {
  */
 func TestLimitedReaderSharedPool(t *testing.T) {
 	// One byte a second
-	pool := NewIOThrottlerPool(BytesPerSecond)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer pool.ReleasePool()
 
 	// This reader will not have any data written to it so it just consumes
@@ -733,7 +745,7 @@ func TestLimitedReaderSharedPool(t *testing.T) {
  */
 func TestIdleClientsDontConsumeBandwidthAllocations(t *testing.T) {
 	// One byte a second
-	pool := NewIOThrottlerPool(BytesPerSecond)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer pool.ReleasePool()
 
 	// This reader will not have any data written to it so it just consumes
@@ -758,7 +770,7 @@ func TestIdleClientsDontConsumeBandwidthAllocations(t *testing.T) {
  */
 func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
 	// One byte a second
-	pool := NewIOThrottlerPool(BytesPerSecond)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer pool.ReleasePool()
 
 	// Wait a bit to make sure bandwidth isn't accumulated
@@ -779,7 +791,7 @@ func TestEmptyPoolDoesntAccumulateBandwidth(t *testing.T) {
  */
 func TestSettingBandwidthOnExistingPoolWorks(t *testing.T) {
 	// One byte a second
-	pool := NewIOThrottlerPool(BytesPerSecond)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.BytesPerSecond)
 	defer pool.ReleasePool()
 
 	readEnd, writeEnd := io.Pipe()
@@ -791,13 +803,13 @@ func TestSettingBandwidthOnExistingPoolWorks(t *testing.T) {
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
 
 	// Now switch to unlimited bandwidth
-	pool.SetBandwidth(Unlimited)
+	pool.SetBandwidth(iothrottler.Unlimited)
 
 	// The pool starts with unlimited bandwidth so this should take 0 seconds
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(0), t)
 
 	// Back to a slow connection
-	pool.SetBandwidth(BytesPerSecond)
+	pool.SetBandwidth(iothrottler.BytesPerSecond)
 
 	// The pool starts with one second of bandwidth. So time is len(data)-1
 	assertTransmitTime(data, readEnd, throttleWriteEnd, Seconds(len(data)-1), t)
@@ -828,9 +840,9 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 		// We calculate the bandwidth so that the initial pool should have exactly
 		// enough bandwidth for all IO without having to wait any time. If our
 		// allocation is perfect this should finish in well under 1/10th of a second
-		bandwidth := Bandwidth(BytesPerSecond * Bandwidth(toCopy*int64(readers)))
+		bandwidth := iothrottler.Bandwidth(iothrottler.BytesPerSecond * iothrottler.Bandwidth(toCopy*int64(readers)))
 
-		pool := NewIOThrottlerPool(bandwidth)
+		pool := iothrottler.NewIOThrottlerPool(bandwidth)
 		defer pool.ReleasePool()
 
 		timer := startTimer()
@@ -863,7 +875,7 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 
 func BenchmarkNewReleasePool(b *testing.B) {
 	for _b := 0; _b != b.N; _b++ {
-		pool := NewIOThrottlerPool(Unlimited)
+		pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
 		defer pool.ReleasePool()
 	}
 }
@@ -871,7 +883,7 @@ func BenchmarkNewReleasePool(b *testing.B) {
 func BenchmarkAdd(b *testing.B) {
 	b.StopTimer()
 
-	pool := NewIOThrottlerPool(Unlimited)
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
 	defer pool.ReleasePool()
 
 	const fileName = "/dev/zero"
@@ -897,7 +909,7 @@ func BenchmarkFull(b *testing.B) {
 		// We calculate the bandwidth so that the initial pool should have exactly
 		// enough bandwidth for all IO without having to wait any time. If our
 		// allocation is perfect this should finish in well under 1/10th of a second
-		bandwidth := Bandwidth(BytesPerSecond * Bandwidth(bytesToCopy*int64(readerCount)))
+		bandwidth := iothrottler.Bandwidth(iothrottler.BytesPerSecond * iothrottler.Bandwidth(bytesToCopy*int64(readerCount)))
 
 		files := make([]*os.File, readerCount)
 		for i := 0; i != readerCount; i++ {
@@ -911,7 +923,7 @@ func BenchmarkFull(b *testing.B) {
 		var dst bytes.Buffer
 		b.StartTimer()
 
-		pool := NewIOThrottlerPool(bandwidth)
+		pool := iothrottler.NewIOThrottlerPool(bandwidth)
 		defer pool.ReleasePool()
 
 		timer := startTimer()
