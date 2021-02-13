@@ -158,7 +158,7 @@ func dosPipe(reader io.Reader, writer io.Writer) {
 }
 
 /*
- * Make sure bandwidth conversions make senct
+ * Make sure bandwidth conversions make sense
  */
 func TestBandwidthConversion(t *testing.T) {
 	for i := iothrottler.Bandwidth(0); i != 1000; i++ {
@@ -230,7 +230,7 @@ func TestReleasingAPoolTwiceIsNoop(t *testing.T) {
 }
 
 /*
- * Make sure closing the bandwidth limited reader/writter closes the original
+ * Make sure closing the bandwidth limited reader/writer closes the original
  * reader/writer
  */
 func TestCloseThrottledClosesOriginal(t *testing.T) {
