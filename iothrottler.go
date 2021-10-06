@@ -9,11 +9,11 @@
 package iothrottler
 
 import (
+	"errors"
 	"io"
 	"log"
 	"math"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -36,114 +36,182 @@ const (
 
 // A pool for throttling IO
 type IOThrottlerPool struct {
-	// Locks the structure variables
-	bandwidthLock *sync.Mutex
-
-	// The simulated bandwidth
-	bandwidth Bandwidth
-	// Tracks the number of bytes that were consumed
-	bandwidthUsed int64
-	// Tracks the time that bandwidth started accumulating
-	bandwidthStartTime time.Time
-	// Tracks the number of clients
-	clientCount int64
+	// A channel for setting the pools bandwith
+	bandwidthSettingChan chan Bandwidth
+	// A channel for allocating bandwidth
+	bandwidthAllocatorChan chan Bandwidth
+	// A channel for returning unused bandwidth to server
+	bandwidthFreeChan chan Bandwidth
+	// A channel for getting a count of the clients
+	// A pool only accumulates bandwidth if the pool is non-empty
+	clientCountChan chan int64
+	// A channel for getting pool release messages
+	releasePoolChan chan bool
 }
 
 // Construct a new IO throttling pool
 // The bandwidth for this pool will be limited to 'bandwidth'
 func NewIOThrottlerPool(bandwidth Bandwidth) *IOThrottlerPool {
 
-	pool := &IOThrottlerPool{
-		bandwidthLock: &sync.Mutex{},
-		bandwidth:     bandwidth,
-	}
+	pool := &IOThrottlerPool{make(chan Bandwidth), make(chan Bandwidth), make(chan Bandwidth), make(chan int64), make(chan bool)}
+
+	go throttlerPoolDriver(pool)
+
+	pool.bandwidthSettingChan <- bandwidth
 
 	return pool
 }
 
-// Release the IOThrottlerPool all bandwidth
-// Deprecated: Pools no longer need to be released
-func (pool *IOThrottlerPool) ReleasePool() {
-}
+func throttlerPoolDriver(pool *IOThrottlerPool) {
 
-// Sets the IOThrottlerPool's bandwidth rate
-func (pool *IOThrottlerPool) SetBandwidth(bandwidth Bandwidth) {
-	// When changing the bandwidth we reset the start time and the bytes sent
-	pool.bandwidthLock.Lock()
-	pool.bandwidth = bandwidth
-	pool.bandwidthUsed = 0
-	pool.bandwidthStartTime = time.Time{}
-	pool.bandwidthLock.Unlock()
+	// These will all be recalculated as soon as the bandwidth is set
+	clientCount := int64(0)
+	currentBandwidth := Bandwidth(0)
+	totalbandwidth := Bandwidth(0)
+	allocationSize := Bandwidth(0)
+	timeout := time.NewTicker(time.Second)
+	var thisBandwidthAllocatorChan chan Bandwidth = nil
 
-	// Reset the start time (if we have any clients)
-	pool.recordStartTime()
-}
+	// Start the timer until we get the first client
+	timeout.Stop()
 
-// useBandwidth consumes up to bytes bandwidth without blocking
-// Returns the number of bytes that can be transmitted
-func (pool *IOThrottlerPool) useBandwidth(bytes int) int {
-	now := time.Now().UTC()
+	recalculateAllocationSize := func() {
+		if currentBandwidth == Unlimited {
+			totalbandwidth = Unlimited
+		}
 
-	pool.bandwidthLock.Lock()
-	defer pool.bandwidthLock.Unlock()
+		if totalbandwidth == Unlimited {
+			allocationSize = Unlimited
+		} else {
 
-	secondsElapsed := int64(now.Sub(pool.bandwidthStartTime).Seconds())
-	availableBandwidth := int((secondsElapsed * int64(pool.bandwidth)) - pool.bandwidthUsed)
-	if bytes > availableBandwidth {
-		bytes = availableBandwidth
+			// Calculate how much bandwidth each consumer will get
+			// We divvy the available bandwidth among the existing
+			// clients but leave a bit of room in case more clients
+			// connect in the mean time. This greatly improves
+			// performance
+			if clientCount == 0 {
+				allocationSize = totalbandwidth / 2
+			} else {
+				allocationSize = totalbandwidth / Bandwidth(clientCount*2)
+			}
+
+			// Even if we have a negative totalbandwidth we never want to
+			// allocate negative bandwidth to members of our pool
+			if allocationSize < 0 {
+				allocationSize = 0
+			}
+
+			// If we do have some bandwidth make sure we at least allocate 1 byte
+			if allocationSize == 0 && totalbandwidth > 0 {
+				allocationSize = 1
+			}
+		}
+
+		if allocationSize > 0 {
+			// Since we have bandwidth to allocate we can select on
+			// the bandwidth allocator chan
+			thisBandwidthAllocatorChan = pool.bandwidthAllocatorChan
+		} else {
+			// We've allocate all out bandwidth so we need to wait for
+			// more
+			thisBandwidthAllocatorChan = nil
+		}
 	}
-	pool.bandwidthUsed += int64(bytes)
 
-	return bytes
-}
-
-// blockForBandwidth consumes bytes bandwidth
-// If that bandwidth isn't immediately available it blocks until it is
-func (pool *IOThrottlerPool) blockForBandwidth(min, max int) int {
-	gotten := 0
 	for {
-		// Try and read the maximum
-		gotten += pool.useBandwidth(max - gotten)
+		select {
+		// Release the pool
+		case release := <-pool.releasePoolChan:
+			if release {
+				close(pool.bandwidthAllocatorChan)
+				close(pool.bandwidthFreeChan)
+				// Don't close the clientCountChan it's not needed and it
+				// complicates the code (two different functions need to recover
+				// the panic if it's closed
+				pool.releasePoolChan <- true
+				close(pool.releasePoolChan)
+				close(pool.clientCountChan)
+				return
+			}
 
-		// If got at least the minimum
-		if gotten >= min {
-			return gotten
+		// Register a new client
+		case increment := <-pool.clientCountChan:
+			// We got our first client
+			// We start the timer as soon as we get our first client
+			if clientCount == 0 {
+				timeout.Reset(time.Second)
+			}
+			clientCount += increment
+			// Our last client left so stop the timer
+			if clientCount == 0 {
+				timeout.Stop()
+			}
+			recalculateAllocationSize()
+
+		// Set the new bandwidth
+		case newBandwidth := <-pool.bandwidthSettingChan:
+			// If we've accumulated more bandwidth then the new amount we
+			// truncate the totalbandwidth to the new set amount. This is
+			// important if the totalbandwidth is much larger than the
+			// new bandwidth value we could end up not really respecting the
+			// new bandwidth setting. An extreme example of this is if the
+			// old bandwidth was set to Unlimited (totalbandwidth would be
+			// Unlimited)
+			//
+			// If the totalbandwidth is less than the new bandwidth setting
+			// we want to bring it up to the new bandwidth value so clients
+			// can immediately use the new available bandwidth
+			totalbandwidth = newBandwidth
+
+			// Update the current bandwidth
+			currentBandwidth = newBandwidth
+
+			recalculateAllocationSize()
+
+		// Allocate some bandwidth
+		case thisBandwidthAllocatorChan <- allocationSize:
+			if Unlimited != totalbandwidth {
+				totalbandwidth -= allocationSize
+
+				recalculateAllocationSize()
+			}
+
+		// Get unused bandwidth back from client
+		case returnSize := <-pool.bandwidthFreeChan:
+			if Unlimited != totalbandwidth {
+				totalbandwidth += returnSize
+			}
+
+			recalculateAllocationSize()
+
+		// Get more bandwidth to allocate
+		case <-timeout.C:
+			if clientCount > 0 {
+				if Unlimited != totalbandwidth {
+					// Get a new allotment of bandwidth
+					totalbandwidth += currentBandwidth
+
+					recalculateAllocationSize()
+				}
+			}
 		}
-
-		pool.bandwidthLock.Lock()
-		bandwidth := pool.bandwidth
-		pool.bandwidthLock.Unlock()
-
-		// Compute the minimal time we'll need to wait for the bandwidth to accumulate
-		waitDuration := time.Duration(bandwidth) * time.Second
-
-		// We want to be fair to other users of the bandwidth. If we block for too long then we could be starved of all
-		// bandwidth or starve others of all bandwidth. So limit the time we'll wait.
-		// This could probably be tuned a bit to divide it based on the number of clients.
-		maxWait := time.Millisecond * 100
-		if waitDuration > maxWait {
-			waitDuration = maxWait
-		}
-		time.Sleep(waitDuration)
 	}
 }
 
-func (pool *IOThrottlerPool) getClientCount() int64 {
-	pool.bandwidthLock.Lock()
-	defer pool.bandwidthLock.Unlock()
-	return pool.clientCount
+// Release the IOThrottlerPool all bandwidth
+func (pool *IOThrottlerPool) ReleasePool() {
+	// If pool.releasePoolChan is already closed (called ReleasePool more than
+	// once) then sending to it will panic so just swallow the panic
+	defer func() {
+		recover()
+	}()
+	pool.releasePoolChan <- true
+	<-pool.releasePoolChan
 }
 
-func (pool *IOThrottlerPool) recordStartTime() {
-	now := time.Now().UTC()
-	pool.bandwidthLock.Lock()
-	defer pool.bandwidthLock.Unlock()
-
-	if pool.bandwidthStartTime.IsZero() {
-		pool.bandwidthStartTime = now
-		// We start with the full allocation of bandwidth. So we simulate this by assuming that negative bandwidth was used.
-		pool.bandwidthUsed -= int64(pool.bandwidth)
-	}
+// Sets the IOThrottlerPool's bandwith rate
+func (pool *IOThrottlerPool) SetBandwidth(bandwith Bandwidth) {
+	pool.bandwidthSettingChan <- bandwith
 }
 
 // Returns the first error or nil if neither are errors
@@ -158,9 +226,15 @@ func orErrors(er0, er1 error) error {
  * Updates the client count for a pool return error on failure
  */
 func twiddleClientCount(p *IOThrottlerPool, change int64) (err error) {
-	p.bandwidthLock.Lock()
-	p.clientCount += change
-	p.bandwidthLock.Unlock()
+	// When the pool has been released the server closes clientCountChan
+	// so our channel send will panic. We want to set the return error
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New("Pool has been released")
+		}
+	}()
+	// Update the client count
+	p.clientCountChan <- change
 
 	return nil
 }
@@ -185,18 +259,55 @@ type throttledReadWriteCloser struct {
 
 // Read method for the throttledReadCloser
 func (t *throttledReadCloser) Read(b []byte) (int, error) {
-	toRead := t.pool.blockForBandwidth(1, len(b))
+	// Get some bandwidth
+	allocation, ok := <-t.pool.bandwidthAllocatorChan
+	if !ok {
+		// Pool has been released
+		return 0, errors.New("Pool has been released")
+	}
+
+	// Calculate how much we can read
+	toRead := Bandwidth(len(b))
+	if allocation < Bandwidth(len(b)) {
+		toRead = allocation
+	}
+
 	// Do the limited read
-	return t.origReadCloser.Read(b[:toRead])
+	n, err := t.origReadCloser.Read(b[:toRead])
+
+	// Free up what we didn't use
+	if Bandwidth(n) < allocation && allocation != Unlimited {
+		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
+	}
+
+	return n, err
 }
 
 // Write method for the throttledWriteCloser
 func (t *throttledWriteCloser) Write(data []byte) (int, error) {
-	bandwidthNeeded := len(data)
-	t.pool.blockForBandwidth(bandwidthNeeded, bandwidthNeeded)
+
+	// Write must either write len(data) bytes or return an error
+	allocation := Bandwidth(0)
+
+	for allocation < Bandwidth(len(data)) {
+		// Get some bandwidth
+		thisAllocation, ok := <-t.pool.bandwidthAllocatorChan
+		if !ok {
+			// Pool has been released
+			return 0, errors.New("Pool has been released")
+		}
+		allocation += thisAllocation
+	}
 
 	// Do the write
-	return t.origWriteCloser.Write(data)
+	n, err := t.origWriteCloser.Write(data)
+
+	// Free up what we didn't use
+	if Bandwidth(n) < allocation && allocation != Unlimited {
+		t.pool.bandwidthFreeChan <- allocation - Bandwidth(n)
+	}
+
+	return n, err
 }
 
 // Close method for the throttledReadCloser
@@ -230,10 +341,6 @@ func (t *throttledReadWriteCloser) Close() error {
 // Add a io.ReadCloser to the pool. The returned io.ReadCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddReader(reader io.ReadCloser) (io.ReadCloser, error) {
-	// Record the start time once we get our first client
-	if p.getClientCount() == 0 {
-		p.recordStartTime()
-	}
 	// Register with the pool
 	err := twiddleClientCount(p, 1)
 	if err != nil {
@@ -246,10 +353,6 @@ func (p *IOThrottlerPool) AddReader(reader io.ReadCloser) (io.ReadCloser, error)
 // Add a io.WriteCloser to the pool. The returned io.WriteCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddWriter(writer io.WriteCloser) (io.WriteCloser, error) {
-	// Record the start time once we get our first client
-	if p.getClientCount() == 0 {
-		p.recordStartTime()
-	}
 	// Register with the pool
 	err := twiddleClientCount(p, 1)
 	if err != nil {
@@ -262,10 +365,6 @@ func (p *IOThrottlerPool) AddWriter(writer io.WriteCloser) (io.WriteCloser, erro
 // Add a io.ReadWriteCloser to the pool. The returned io.ReadWriteCloser shares the
 // IOThrottlerPool's bandwidth with other items in the pool.
 func (p *IOThrottlerPool) AddReadWriter(readWriter io.ReadWriteCloser) (io.ReadWriteCloser, error) {
-	// Record the start time once we get our first client
-	if p.getClientCount() == 0 {
-		p.recordStartTime()
-	}
 	// Register with the pool
 	err := twiddleClientCount(p, 1)
 	if err != nil {
@@ -310,10 +409,6 @@ func (c *throttledConn) SetWriteDeadline(t time.Time) error {
 
 // Restrict the network connection to the bandwidth limitations of the IOThrottlerPool
 func (p *IOThrottlerPool) AddConn(conn net.Conn) (net.Conn, error) {
-	// Record the start time once we get our first client
-	if p.getClientCount() == 0 {
-		p.recordStartTime()
-	}
 
 	rwCloser, err := p.AddReadWriter(conn)
 	if err != nil {
