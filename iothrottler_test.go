@@ -873,6 +873,21 @@ func TestFairBandwidthAllocationPoolMembers(t *testing.T) {
 	}
 }
 
+func TestUnlimitedBandwidthOverflowRegression(t *testing.T) {
+	pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
+	readEnd, writeEnd := io.Pipe()
+	throttledReadEnd, err := pool.AddReader(readEnd)
+	throttledWriteEnd, err := pool.AddWriter(writeEnd)
+	assertNoError(t, err)
+	data := make([]byte, 10000)
+
+	assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
+	assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
+	// sleep for some time
+	time.Sleep(1 * time.Second)
+	assertTransmitTime(data, throttledReadEnd, throttledWriteEnd, 0, t)
+}
+
 func BenchmarkNewReleasePool(b *testing.B) {
 	for _b := 0; _b != b.N; _b++ {
 		pool := iothrottler.NewIOThrottlerPool(iothrottler.Unlimited)
