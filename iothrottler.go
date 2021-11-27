@@ -18,8 +18,8 @@ import (
 )
 
 // The Bandwidth type represents a bandwidth quantity in bytes per second.
-// Sub-byte per seconds values are not supported
-type Bandwidth int64
+// Sub-byte per seconds values are not supported.Must be a non-negative value
+type Bandwidth uint64
 
 const (
 	// Bytes per second
